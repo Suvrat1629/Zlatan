@@ -22,6 +22,9 @@ data class EngineConfig(
     // Exponential smoothing on model speed (0..1); lower = smoother, tames output spikes.
     val speedSmoothingAlpha: Float = 0.35f,
 
+    // Below this, published speed is forced to 0 (a vehicle never truly does ~1 km/h for long).
+    val speedDeadbandMps: Float = 0.42f,
+
     val gnssLostNoFixTimeoutMs: Long = 3_000,
     val handoverSlewSeconds: Double = 1.5,
 

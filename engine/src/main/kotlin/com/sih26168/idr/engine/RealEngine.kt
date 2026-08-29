@@ -176,7 +176,9 @@ class RealEngine(
         // otherwise lurch the dot). Decays toward 0 on its own when ZUPT holds instantSpeed at 0.
         val a = config.speedSmoothingAlpha
         smoothedSpeed = a * instantSpeed + (1f - a) * smoothedSpeed
-        val speedMps = smoothedSpeed
+        // Deadband: sub-walking-pace speeds are model leakage, not real vehicle motion —
+        // publishing them makes the dot creep in whatever direction the heading points.
+        val speedMps = if (smoothedSpeed < config.speedDeadbandMps) 0f else smoothedSpeed
 
         val dtSeconds = 1.0 / config.outputRateHz
         headingEstimator.predict(lastGyroZ, dtSeconds)

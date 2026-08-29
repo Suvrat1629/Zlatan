@@ -103,6 +103,14 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
         plainGpsTrail.addPoint(GeoPoint(lat, lon))
     }
 
+    override fun clearTrail() {
+        trailSegments.forEach { mapView.overlays.remove(it) }
+        trailSegments.clear()
+        currentSegmentIsGnss = null
+        plainGpsTrail.setPoints(emptyList())
+        mapView.invalidate()
+    }
+
     override fun setCompareMode(enabled: Boolean) {
         plainGpsTrail.isEnabled = enabled
         mapView.invalidate()

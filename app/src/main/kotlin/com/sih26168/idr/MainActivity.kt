@@ -103,6 +103,7 @@ class MainActivity : AppCompatActivity() {
             muteToggle.text = getString(
                 if (newlyMuted) R.string.gnss_unmute_toggle else R.string.gnss_mute_toggle
             )
+            if (!newlyMuted) mapRenderer.clearTrail()   // RESTORE GNSS wipes stale trails
         }
         recordButton.setOnClickListener {
             val recording = service?.toggleRecording() ?: false
