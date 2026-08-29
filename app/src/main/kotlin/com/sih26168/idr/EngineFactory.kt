@@ -36,7 +36,12 @@ object EngineFactory {
         val handle = provider.resolve(MODEL_KIND) ?: error("no packaged asset for '$MODEL_KIND'")
         val estimator = TfliteSpeedEstimator(handle)
         val normalizer = Normalizer.fromManifest(handle.manifest)
-        return RealEngine(config = config, speedEstimator = estimator, normalizer = normalizer, startAt = startAt)
+        // Full-rate CSV trace to app external files dir (pull with: adb pull <path>).
+        val traceCsv = java.io.File(context.getExternalFilesDir(null), "idr_trace_${System.currentTimeMillis()}.csv")
+        return RealEngine(
+            config = config, speedEstimator = estimator, normalizer = normalizer,
+            startAt = startAt, traceCsv = traceCsv,
+        )
     }
 
     private fun loadConfig(context: Context): EngineConfig = try {

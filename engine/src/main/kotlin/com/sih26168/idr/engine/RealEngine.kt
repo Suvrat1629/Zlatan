@@ -31,9 +31,23 @@ class RealEngine(
     private val headingEstimator: HeadingEstimator = GyroIntegrationHeadingEstimator(),
     private val fusionFilter: FusionFilter = PassthroughFusionFilter(startAt),
     private val mapMatcher: MapMatcher = NoOpMapMatcher(),
+    private val traceCsv: java.io.File? = null,
 
     ringBufferCapacitySamples: Int = 4000,
 ) : PositioningEngine {
+
+    // Optional full-rate CSV trace on the device (tilt/accel/speed/displacement per tick).
+    private val csvWriter: java.io.BufferedWriter? = traceCsv?.let { file ->
+        file.parentFile?.mkdirs()
+        System.out.println("IDR-TRACE writing CSV to ${file.absolutePath}")
+        file.bufferedWriter().apply {
+            write("wallclock_ms,t_end_nanos,mode,pitch_deg,roll_deg,raw_acc_mps2,lin_acc_mps2," +
+                "gyro_mag_rps,stationary,model_speed_mps,published_speed_mps,heading_deg," +
+                "lat,lon,d_east_m,d_north_m,dist_from_origin_m,sats,navic")
+            newLine()
+            flush()
+        }
+    }
 
     private val ringBuffer = RingBuffer(ringBufferCapacitySamples)
     private val conditioning = ConditioningStage()
@@ -76,6 +90,7 @@ class RealEngine(
         running = false
         scheduler.shutdown()
         speedEstimator.close()
+        try { csvWriter?.flush(); csvWriter?.close() } catch (e: Exception) { /* ignore */ }
     }
 
     private fun safeTick() {
@@ -171,32 +186,44 @@ class RealEngine(
         val matched = mapMatcher.snap(fused)
         deadReckoner.reset(matched)
 
-        // Real-time diagnostics — view with:  adb logcat -s System.out:I | grep IDR-TICK
+        // ---- diagnostics: computed every tick, CSV full-rate, logcat throttled ----
+        var aLin = 0f; var gyroMag = 0f
+        for (row in features) { aLin += row[2]; gyroMag += row[6] }
+        aLin /= features.size; gyroMag /= features.size
+        // tilt + raw accel from the newest raw sample [ax,ay,az,grx,gry,grz,gx,gy,gz]
+        val last = rawWindow.last()
+        val grx = last[3]; val gry = last[4]; val grz = last[5]
+        val pitchDeg = Math.toDegrees(kotlin.math.atan2(-grx.toDouble(),
+            kotlin.math.sqrt((gry * gry + grz * grz).toDouble())))
+        val rollDeg = Math.toDegrees(kotlin.math.atan2(gry.toDouble(), grz.toDouble()))
+        val rawAccMag = kotlin.math.sqrt((last[0] * last[0] + last[1] * last[1] + last[2] * last[2]).toDouble())
+        // displacement of the navigator from the origin (equirectangular metres)
+        val dNorth = (matched.lat - origin.lat) * 111_320.0
+        val dEast = (matched.lon - origin.lon) * 111_320.0 * kotlin.math.cos(Math.toRadians(origin.lat))
+        val distFromOrigin = kotlin.math.sqrt(dNorth * dNorth + dEast * dEast)
+        val mode = modeArbiter.currentMode(tEndNanos)
+        val sats = modeArbiter.satsInFix(); val navic = modeArbiter.irnssSatsInFix()
+
+        csvWriter?.apply {
+            write("${System.currentTimeMillis()},$tEndNanos,$mode," +
+                "${"%.2f".format(pitchDeg)},${"%.2f".format(rollDeg)}," +
+                "${"%.3f".format(rawAccMag)},${"%.3f".format(aLin)},${"%.4f".format(gyroMag)},$stationary," +
+                "${"%.3f".format(rawModelSpeed)},${"%.3f".format(speedMps)},${"%.1f".format(headingDeg)}," +
+                "${"%.7f".format(matched.lat)},${"%.7f".format(matched.lon)}," +
+                "${"%.1f".format(dEast)},${"%.1f".format(dNorth)},${"%.1f".format(distFromOrigin)},$sats,$navic")
+            newLine()
+        }
         if (tickCount++ % LOG_EVERY_N_TICKS == 0) {
-            // motion energy from the feature window (means)
-            var aLin = 0f; var gyroMag = 0f
-            for (row in features) { aLin += row[2]; gyroMag += row[6] }
-            aLin /= features.size; gyroMag /= features.size
-            // tilt + raw accel from the newest raw sample [ax,ay,az,grx,gry,grz,gx,gy,gz]
-            val last = rawWindow.last()
-            val grx = last[3]; val gry = last[4]; val grz = last[5]
-            val pitchDeg = Math.toDegrees(kotlin.math.atan2(-grx.toDouble(),
-                kotlin.math.sqrt((gry * gry + grz * grz).toDouble())))
-            val rollDeg = Math.toDegrees(kotlin.math.atan2(gry.toDouble(), grz.toDouble()))
-            val rawAccMag = kotlin.math.sqrt((last[0] * last[0] + last[1] * last[1] + last[2] * last[2]).toDouble())
-            // displacement of the navigator from the origin (equirectangular metres)
-            val dNorth = (matched.lat - origin.lat) * 111_320.0
-            val dEast = (matched.lon - origin.lon) * 111_320.0 * kotlin.math.cos(Math.toRadians(origin.lat))
-            val distFromOrigin = kotlin.math.sqrt(dNorth * dNorth + dEast * dEast)
+            csvWriter?.flush()
             System.out.println(
-                "IDR-TICK mode=${modeArbiter.currentMode(tEndNanos)} " +
+                "IDR-TICK mode=$mode " +
                     "tilt(pitch=${"%.0f".format(pitchDeg)} roll=${"%.0f".format(rollDeg)})deg " +
                     "acc(raw=${"%.2f".format(rawAccMag)} lin=${"%.3f".format(aLin)})m/s2 " +
                     "gyroMag=${"%.4f".format(gyroMag)}rad/s stationary=$stationary " +
                     "modelSpeed=${"%.2f".format(rawModelSpeed)} published=${"%.2f".format(speedMps)}m/s(${"%.1f".format(speedMps * 3.6f)}km/h) " +
                     "hdg=${"%.0f".format(headingDeg)}deg " +
                     "origin(dE=${"%.1f".format(dEast)} dN=${"%.1f".format(dNorth)} dist=${"%.1f".format(distFromOrigin)})m " +
-                    "sats=${modeArbiter.satsInFix()} navic=${modeArbiter.irnssSatsInFix()}"
+                    "sats=$sats navic=$navic"
             )
         }
 
