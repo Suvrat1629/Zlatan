@@ -57,6 +57,7 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
 
     private var followEnabled = true
     private var lastPoint: GeoPoint? = null
+    private var hasCentered = false
 
     override fun attach(container: ViewGroup) {
         container.removeAllViews()
@@ -95,7 +96,19 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
             if (degraded) UNCERTAINTY_FILL_DR else UNCERTAINTY_FILL_GNSS
         uncertaintyCircle.outlinePaint.color =
             if (degraded) UNCERTAINTY_STROKE_DR else UNCERTAINTY_STROKE_GNSS
-        if (followEnabled) mapView.controller.animateTo(point)
+        if (followEnabled) {
+            if (!hasCentered) {
+                // The very first fix: jump straight there. MapView defaults to
+                // (0,0) ("Null Island") when no center is ever set, and animating
+                // from there at a tight zoom means flying tiles across half the
+                // globe before settling — this is what "the map takes forever to
+                // load" actually was. Every update after this one still animates.
+                mapView.controller.setCenter(point)
+                hasCentered = true
+            } else {
+                mapView.controller.animateTo(point)
+            }
+        }
         mapView.invalidate()
     }
 
