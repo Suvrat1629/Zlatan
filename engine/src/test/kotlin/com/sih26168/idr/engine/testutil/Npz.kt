@@ -52,7 +52,7 @@ object Npz {
     }
 
     private fun parseNpy(bytes: ByteArray): NpyArray? {
-        require(bytes.size > 10 && bytes[0].toInt() == 0x93) { "not an .npy stream" }
+        require(bytes.size > 10 && (bytes[0].toInt() and 0xFF) == 0x93) { "not an .npy stream" }
         val major = bytes[6].toInt()
         val headerLen: Int
         val headerStart: Int
