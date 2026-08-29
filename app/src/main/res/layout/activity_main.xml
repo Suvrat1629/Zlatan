@@ -5,7 +5,6 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- The map fills the screen; everything else overlays it. -->
     <FrameLayout
         android:id="@+id/map_container"
         android:layout_width="0dp"
@@ -15,7 +14,6 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Status bar: mode badge + satellite/NavIC info (docs/05-App-Features.md main view) -->
     <TextView
         android:id="@+id/mode_badge"
         android:layout_width="wrap_content"
@@ -28,6 +26,20 @@
         android:textStyle="bold"
         android:text="@string/mode_init"
         app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <TextView
+        android:id="@+id/drift_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/badge_background"
+        android:padding="10dp"
+        android:textColor="#FFFFFF"
+        android:textSize="12sp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/mode_badge"
         app:layout_constraintStart_toStartOf="parent" />
 
     <TextView
@@ -44,8 +56,6 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Recenter — map panning/zooming stops auto-follow (see OsmdroidMapRenderer); this
-         is how the user gets back to being tracked. -->
     <ImageButton
         android:id="@+id/recenter_button"
         android:layout_width="48dp"
@@ -60,7 +70,6 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Demo / proof controls (docs/05-App-Features.md "Demo / proof features") -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -76,17 +85,68 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginEnd="8dp"
+            android:layout_marginEnd="4dp"
+            android:textSize="11sp"
             android:text="@string/gnss_mute_toggle" />
+
+        <Button
+            android:id="@+id/compare_toggle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp"
+            android:textSize="11sp"
+            android:text="@string/compare_toggle" />
 
         <Button
             android:id="@+id/record_button"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="8dp"
+            android:layout_marginStart="4dp"
+            android:textSize="11sp"
             android:text="@string/record_trip" />
 
     </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/permission_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#CC000000"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:background="@drawable/badge_background"
+            android:padding="24dp">
+
+            <TextView
+                android:id="@+id/permission_message"
+                android:layout_width="240dp"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:text="@string/permission_rationale" />
+
+            <Button
+                android:id="@+id/grant_permission_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:layout_marginTop="16dp"
+                android:text="@string/grant_permission" />
+
+        </LinearLayout>
+
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

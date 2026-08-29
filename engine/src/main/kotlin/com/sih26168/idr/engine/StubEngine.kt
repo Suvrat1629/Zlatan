@@ -28,6 +28,8 @@ class StubEngine(
     private var gnssGood = false
     private var satsInFix = 0
     private var irnssSatsInFix = 0
+    private var uncertaintyM = MIN_UNCERTAINTY_M
+    private var hasReceivedFix = false
     private var running = false
 
     private val periodMs = (1000.0 / outputRateHz).toLong()
@@ -61,8 +63,14 @@ class StubEngine(
         speedMps: Float, bearingDeg: Float, horizAccM: Float,
         satsInFix: Int, irnssSatsInFix: Int,
     ) {
-        this.lat = lat
-        this.lon = lon
+        if (!hasReceivedFix) {
+            this.lat = lat
+            this.lon = lon
+            hasReceivedFix = true
+        } else {
+            this.lat += POSITION_SMOOTHING_ALPHA * (lat - this.lat)
+            this.lon += POSITION_SMOOTHING_ALPHA * (lon - this.lon)
+        }
         this.headingDeg = bearingDeg.toDouble()
         this.gnssSpeedMps = speedMps
         this.gnssGood = true
@@ -80,12 +88,21 @@ class StubEngine(
         if (!running) return
         val t0 = System.nanoTime()
         val dtSeconds = periodMs / 1000.0
-        headingDeg = (headingDeg + Math.toDegrees(lastGyroZ * dtSeconds)).mod(360.0)
-        val forwardM = gnssSpeedMps * dtSeconds
-        val headingRad = Math.toRadians(headingDeg)
-        val earthRadiusM = 6_378_137.0
-        lat += (forwardM * cos(headingRad)) / earthRadiusM * (180.0 / Math.PI)
-        lon += (forwardM * sin(headingRad)) / (earthRadiusM * cos(Math.toRadians(lat))) * (180.0 / Math.PI)
+
+        if (!gnssGood) {
+            headingDeg = (headingDeg + Math.toDegrees(lastGyroZ * dtSeconds)).mod(360.0)
+            val forwardM = gnssSpeedMps * dtSeconds
+            val headingRad = Math.toRadians(headingDeg)
+            val earthRadiusM = 6_378_137.0
+            lat += (forwardM * cos(headingRad)) / earthRadiusM * (180.0 / Math.PI)
+            lon += (forwardM * sin(headingRad)) / (earthRadiusM * cos(Math.toRadians(lat))) * (180.0 / Math.PI)
+        }
+
+        uncertaintyM = if (gnssGood) {
+            MIN_UNCERTAINTY_M
+        } else {
+            (uncertaintyM + UNCERTAINTY_GROWTH_M_PER_S.toFloat() * dtSeconds.toFloat()).coerceAtMost(MAX_UNCERTAINTY_M)
+        }
 
         _state.value = PositionState(
             lat = lat, lon = lon,
@@ -94,7 +111,15 @@ class StubEngine(
             mode = if (gnssGood) (if (irnssSatsInFix > 0) Mode.NAVIC else Mode.GNSS) else Mode.DEAD_RECKONING,
             satsInFix = satsInFix,
             irnssSatsInFix = irnssSatsInFix,
+            uncertaintyM = uncertaintyM,
             engineTickMs = (System.nanoTime() - t0) / 1_000_000f,
         )
+    }
+
+    companion object {
+        private const val MIN_UNCERTAINTY_M = 5f
+        private const val MAX_UNCERTAINTY_M = 150f
+        private const val UNCERTAINTY_GROWTH_M_PER_S = 1.5
+        private const val POSITION_SMOOTHING_ALPHA = 0.35
     }
 }

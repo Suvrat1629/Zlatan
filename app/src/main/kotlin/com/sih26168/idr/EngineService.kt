@@ -10,6 +10,7 @@ import android.location.LocationManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.Mode
@@ -30,8 +31,11 @@ class EngineService : Service() {
 
     private lateinit var rawEngine: PositioningEngine
     private lateinit var recordingEngine: TripRecordingEngine
-    private lateinit var sensorSource: SensorSource
-    private lateinit var gnssSource: GnssSource
+    private var sensorSource: SensorSource? = null
+    private var gnssSource: GnssSource? = null
+
+    var startupFailed: Boolean = false
+        private set
 
     val engine: PositioningEngine get() = recordingEngine
     val isRecording: Boolean get() = recordingEngine.isRecording
@@ -41,9 +45,14 @@ class EngineService : Service() {
         val lastKnown = lastKnownLocation()
         rawEngine = if (lastKnown != null) EngineFactory.create(this, lastKnown) else EngineFactory.create(this)
         recordingEngine = TripRecordingEngine(rawEngine)
-        sensorSource = SensorSource(this, recordingEngine)
-        gnssSource = GnssSource(this, recordingEngine)
         createNotificationChannel()
+        try {
+            sensorSource = SensorSource(this, recordingEngine)
+            gnssSource = GnssSource(this, recordingEngine)
+        } catch (e: SensorSource.NoGyroscopeException) {
+            startupFailed = true
+            Toast.makeText(this, getString(R.string.no_gyroscope_error), Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun lastKnownLocation(): LatLon? {
@@ -60,23 +69,29 @@ class EngineService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, buildNotification(recordingEngine.state.value.mode))
+        if (startupFailed) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         recordingEngine.start()
-        sensorSource.start()
-        gnssSource.start()
+        sensorSource?.start()
+        gnssSource?.start()
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
-        sensorSource.stop()
-        gnssSource.stop()
+        sensorSource?.stop()
+        gnssSource?.stop()
         recordingEngine.stopRecording()
         recordingEngine.stop()
         super.onDestroy()
     }
 
-    fun setGnssMuted(muted: Boolean) = gnssSource.setMuted(muted)
+    fun setGnssMuted(muted: Boolean) {
+        gnssSource?.setMuted(muted)
+    }
 
     fun toggleRecording(): Boolean {
         if (recordingEngine.isRecording) {

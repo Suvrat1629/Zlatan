@@ -11,9 +11,13 @@ interface MapRenderer {
     fun onResume()
     fun onPause()
 
-    fun updatePosition(lat: Double, lon: Double, headingDeg: Float)
+    fun updatePosition(lat: Double, lon: Double, headingDeg: Float, uncertaintyM: Float)
 
     fun appendTrailPoint(lat: Double, lon: Double, mode: Mode)
+
+    fun appendPlainGpsPoint(lat: Double, lon: Double)
+
+    fun setCompareMode(enabled: Boolean)
 
     fun recenter()
 
