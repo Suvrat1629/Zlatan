@@ -125,6 +125,12 @@ class RealEngine(
         if (fix != null) {
             headingEstimator.seedFromGnssCourse(fix.bearingDeg)
             fusionFilter.updateWithGnss(LatLon(fix.lat, fix.lon), fix.speedMps, fix.bearingDeg, fix.horizAccM)
+            // CRITICAL: also snap the dead-reckoner to the fix. Without this, the next
+            // deadReckoner.step() continues from its own stale position and
+            // fusionFilter.predict() overwrites the GNSS update in this same tick — so the
+            // published dot was pure dead-reckoning forever after INIT, silently ignoring
+            // every GNSS fix (map position visibly desynced from real GPS).
+            deadReckoner.reset(LatLon(fix.lat, fix.lon))
         }
 
         if (rawWindow == null) {
