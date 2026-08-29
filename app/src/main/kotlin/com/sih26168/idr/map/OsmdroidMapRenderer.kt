@@ -11,6 +11,7 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.Polyline
 
 class OsmdroidMapRenderer(context: Context) : MapRenderer {
@@ -26,6 +27,12 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
         controller.setZoom(17.0)
     }
 
+    private val uncertaintyCircle = Polygon(mapView).apply {
+        fillColor = 0x334285F4
+        strokeColor = 0x664285F4
+        strokeWidth = 2f
+    }
+
     private val vehicleMarker = Marker(mapView).apply {
         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
         setIcon(context.getDrawable(R.drawable.ic_position_dot))
@@ -35,21 +42,24 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
     private val trailSegments = mutableListOf<Polyline>()
     private var currentSegmentIsGnss: Boolean? = null
 
-    // Following the dot every update is what forces the map back under you the instant
-    // you try to pan/zoom away — a real usability bug, not the intended behaviour. Track
-    // whether the user has taken manual control instead, and only auto-follow when they
-    // haven't. Detecting an actual touch (not our own animateTo() calls) is the reliable
-    // signal for "the user grabbed the map."
+    private val plainGpsTrail = Polyline(mapView).apply {
+        outlinePaint.strokeWidth = 8f
+        outlinePaint.color = 0xFF9E9E9E.toInt()
+        isEnabled = false
+    }
+
     private var followEnabled = true
     private var lastPoint: GeoPoint? = null
 
     override fun attach(container: ViewGroup) {
         container.removeAllViews()
         container.addView(mapView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        mapView.overlays.add(plainGpsTrail)
+        mapView.overlays.add(uncertaintyCircle)
         mapView.overlays.add(vehicleMarker)
         mapView.setOnTouchListener { _, event ->
             if (event.actionMasked == MotionEvent.ACTION_DOWN) followEnabled = false
-            false // don't consume — let the map's own pan/zoom handling still run
+            false
         }
     }
 
@@ -61,11 +71,16 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
     override fun onResume() = mapView.onResume()
     override fun onPause() = mapView.onPause()
 
-    override fun updatePosition(lat: Double, lon: Double, headingDeg: Float) {
+    override fun updatePosition(lat: Double, lon: Double, headingDeg: Float, uncertaintyM: Float) {
         val point = GeoPoint(lat, lon)
         lastPoint = point
         vehicleMarker.position = point
         vehicleMarker.setRotation(headingDeg)
+        uncertaintyCircle.points = if (uncertaintyM > 0f) {
+            Polygon.pointsAsCircle(point, uncertaintyM.toDouble())
+        } else {
+            emptyList()
+        }
         if (followEnabled) mapView.controller.animateTo(point)
         mapView.invalidate()
     }
@@ -82,6 +97,15 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
             currentSegmentIsGnss = isGnss
         }
         trailSegments.last().addPoint(GeoPoint(lat, lon))
+    }
+
+    override fun appendPlainGpsPoint(lat: Double, lon: Double) {
+        plainGpsTrail.addPoint(GeoPoint(lat, lon))
+    }
+
+    override fun setCompareMode(enabled: Boolean) {
+        plainGpsTrail.isEnabled = enabled
+        mapView.invalidate()
     }
 
     override fun recenter() {

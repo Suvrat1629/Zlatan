@@ -12,4 +12,11 @@
     <string name="stop_recording">Stop recording</string>
     <string name="speed_format">%.0f km/h</string>
     <string name="recenter">Recenter on my location</string>
+    <string name="compare_toggle">Compare view</string>
+    <string name="drift_format">Drift: ~%.1f%% (%.0fm since GPS lost)</string>
+    <string name="drift_unknown">Drift: —</string>
+    <string name="permission_denied_permanently">Location permission was denied and can\'t be re-requested here. Enable it in system settings to use the app.</string>
+    <string name="open_settings">Open settings</string>
+    <string name="grant_permission">Grant permission</string>
+    <string name="no_gyroscope_error">This device has no gyroscope. IDR can\'t function without one.</string>
 </resources>

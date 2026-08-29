@@ -49,12 +49,22 @@ class GnssSource(
         lastFixElapsedRealtimeNanos = nowElapsedRealtimeNanos
         if (gnssMuted) return@LocationListener
 
+        val accuracyM = if (location.hasAccuracy()) location.accuracy else null
+        if (accuracyM != null && accuracyM > MAX_ACCEPTABLE_ACCURACY_M) {
+            System.err.println("[GnssSource] rejected fix with accuracy ${accuracyM}m (multipath/poor geometry) — over ${MAX_ACCEPTABLE_ACCURACY_M}m threshold")
+            return@LocationListener
+        }
+        if (satsInFix in 1 until MIN_SATS_FOR_TRUST) {
+            System.err.println("[GnssSource] rejected fix with only $satsInFix satellites — under ${MIN_SATS_FOR_TRUST} sats, geometry too weak to trust (this is exactly what causes standing-still jitter)")
+            return@LocationListener
+        }
+
         engine.onGnssFix(
             tNanos = nowElapsedRealtimeNanos,
             lat = location.latitude, lon = location.longitude,
             speedMps = if (location.hasSpeed()) location.speed else 0f,
             bearingDeg = if (location.hasBearing()) location.bearing else 0f,
-            horizAccM = if (location.hasAccuracy()) location.accuracy else 999f,
+            horizAccM = accuracyM ?: 999f,
             satsInFix = satsInFix, irnssSatsInFix = irnssSatsInFix,
         )
     }
@@ -83,5 +93,10 @@ class GnssSource(
     fun setMuted(muted: Boolean, tNanos: Long = SystemClock.elapsedRealtimeNanos()) {
         gnssMuted = muted
         if (muted) engine.onGnssLost(tNanos)
+    }
+
+    companion object {
+        private const val MAX_ACCEPTABLE_ACCURACY_M = 30f
+        private const val MIN_SATS_FOR_TRUST = 4
     }
 }
