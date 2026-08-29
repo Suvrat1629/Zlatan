@@ -56,7 +56,11 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
      */
     private fun configureTileSource(context: Context) {
         val archiveDir = File(context.getExternalFilesDir(null) ?: context.filesDir, OFFLINE_TILE_DIR)
-        val archiveFiles = archiveDir.listFiles { file -> ArchiveFileFactory.isFileExtensionRegistered(file.name) }
+        // isFileExtensionRegistered wants the bare extension (e.g. "mbtiles"), not the
+        // full filename with the dot — passing file.name here always returns false.
+        val archiveFiles = archiveDir.listFiles { file ->
+            ArchiveFileFactory.isFileExtensionRegistered(file.extension.lowercase())
+        }
             ?.toList()
             .orEmpty()
 
@@ -212,7 +216,16 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
 
     override fun recenter() {
         followEnabled = true
-        lastPoint?.let { mapView.controller.animateTo(it) }
+        val point = lastPoint ?: return
+        if (!hasCentered) {
+            // Same reasoning as updatePosition()'s first-fix case: if the user pans away
+            // before any fix has landed and then hits recenter, don't animate from
+            // Null Island either.
+            mapView.controller.setCenter(point)
+            hasCentered = true
+        } else {
+            mapView.controller.animateTo(point)
+        }
     }
 
     companion object {
