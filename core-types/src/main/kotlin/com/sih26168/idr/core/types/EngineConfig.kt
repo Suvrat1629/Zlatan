@@ -6,6 +6,9 @@ data class EngineConfig(
 
     val windowSeconds: Double = 5.0,
 
+    // Informational only. The Decimator uses a per-bin box average (matching the model
+    // team's decimate.py), whose effective anti-alias cutoff is ~modelRateHz/2 — it takes
+    // no cutoff parameter. Kept in the schema so config.json stays stable.
     val antiAliasCutoffHz: Double = 4.0,
 
     val ringBufferSeconds: Double = 8.0,

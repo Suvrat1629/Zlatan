@@ -10,5 +10,7 @@ captures/
 *.apk
 *.aab
 
-# real device/trip data — never commit recorded drives
+# model binaries are versioned data, delivered via sih-26168-model, not committed
 /app/src/main/assets/engine.tflite
+/android-model/src/androidTest/assets/engine.tflite
+/android-model/src/androidTest/assets/testset.npz

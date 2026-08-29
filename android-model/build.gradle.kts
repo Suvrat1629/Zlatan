@@ -9,6 +9,7 @@ android {
 
     defaultConfig {
         minSdk = 26
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     compileOptions {
@@ -29,6 +30,11 @@ dependencies {
     api(project(":core-types"))
     api(project(":core-model"))
     api(project(":core-assets"))
+    implementation(project(":engine"))
 
     implementation("org.tensorflow:tensorflow-lite:2.17.0")
+
+    // Parity gates G3 / G4 — run on a device: ./gradlew :android-model:connectedAndroidTest
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }
