@@ -1,62 +1,84 @@
 package com.sih26168.idr.engine
 
 import com.sih26168.idr.core.types.ImuSampleRecord
-import kotlin.math.PI
-import kotlin.math.exp
 
+/**
+ * Native-rate IMU -> the model's fixed-rate grid, by per-bin box averaging.
+ *
+ * Kotlin twin of the model team's `sih-26168-model/decimate.py` (parity gate **G2a**).
+ * Each output row is the mean of the native samples whose timestamp falls in that
+ * `1 / modelRateHz`-wide bin, centred on the grid point. An empty bin falls back to the
+ * first sample at or after the centre (clamped), exactly as `decimate.py` does.
+ *
+ * The box average is a simple **causal** anti-alias matched to the output rate: no filter
+ * state, trivial to reproduce, and it matches training — IO-VNBD's smartphone data is
+ * natively 10 Hz, so the model never saw a low-pass-then-resample pipeline. Picking the
+ * nearest sample instead would alias vibration energy into the band the speed model uses.
+ */
 class Decimator(
-    private val cutoffHz: Double,
     private val modelRateHz: Double,
     private val windowSamples: Int,
 ) {
+    private val periodNs: Long = (1_000_000_000.0 / modelRateHz).toLong()
+    private val halfNs: Long = periodNs / 2
 
+    /**
+     * The last [windowSamples] rows at [modelRateHz], the final bin centred on [tEndNanos].
+     * Returns null until the ring buffer covers the whole window.
+     */
     fun decimate(nativeSamples: List<ImuSampleRecord>, tEndNanos: Long): Array<FloatArray>? {
         if (nativeSamples.size < 2) return null
-        val filtered = lowPass(nativeSamples)
-        val periodNs = (1_000_000_000.0 / modelRateHz).toLong()
-        val earliestNeededNs = tEndNanos - (windowSamples - 1) * periodNs
-        if (filtered.first().tNanos > earliestNeededNs) return null
-        if (filtered.last().tNanos < tEndNanos) return null
+        val firstCentre = tEndNanos - (windowSamples - 1) * periodNs
+        if (nativeSamples.first().tNanos > firstCentre - halfNs) return null
+        if (nativeSamples.last().tNanos < tEndNanos - halfNs) return null
+        val centres = LongArray(windowSamples) { k -> tEndNanos - (windowSamples - 1 - k) * periodNs }
+        return boxAverage(nativeSamples, centres)
+    }
 
-        return Array(windowSamples) { k ->
-            val t = tEndNanos - (windowSamples - 1 - k) * periodNs
-            interpolate(filtered, t)
+    /**
+     * Faithful port of `decimate.py`: a uniform grid from the first sample's timestamp to
+     * the last, `floor((t1 - t0) / period)` points, centred bins. Used by the G2a parity
+     * test to check this class against the Python reference on the same input.
+     */
+    fun decimateFullGrid(nativeSamples: List<ImuSampleRecord>): Array<FloatArray> {
+        require(nativeSamples.size >= 2) { "need >= 2 samples" }
+        val t0 = nativeSamples.first().tNanos
+        val t1 = nativeSamples.last().tNanos
+        val n = ((t1 - t0) / periodNs).toInt().coerceAtLeast(1)   // == len(np.arange(t0, t1, period))
+        val centres = LongArray(n) { m -> t0 + m * periodNs }
+        return boxAverage(nativeSamples, centres)
+    }
+
+    private fun boxAverage(samples: List<ImuSampleRecord>, centres: LongArray): Array<FloatArray> {
+        val ts = LongArray(samples.size) { samples[it].tNanos }
+        val ch = Array(samples.size) { samples[it].toRawChannels() }
+        val width = ch[0].size
+        return Array(centres.size) { m ->
+            val c = centres[m]
+            val lo = lowerBound(ts, c - halfNs)   // first idx with t >= c - half  (np.searchsorted, side='left')
+            val hi = lowerBound(ts, c + halfNs)   // first idx with t >= c + half
+            if (hi <= lo) {
+                // empty bin -> decimate.py: min(searchsorted(t, centre), len - 1)
+                ch[minOf(lowerBound(ts, c), samples.size - 1)].copyOf()
+            } else {
+                val acc = DoubleArray(width)
+                for (i in lo until hi) {
+                    val row = ch[i]
+                    for (d in 0 until width) acc[d] += row[d]
+                }
+                val cnt = (hi - lo).toDouble()
+                FloatArray(width) { d -> (acc[d] / cnt).toFloat() }
+            }
         }
     }
 
-    private class Filtered(val tNanos: Long, val channels: FloatArray)
-
-    private fun lowPass(samples: List<ImuSampleRecord>): List<Filtered> {
-        val out = ArrayList<Filtered>(samples.size)
-        var state = samples.first().toRawChannels()
-        out.add(Filtered(samples.first().tNanos, state.copyOf()))
-        for (i in 1 until samples.size) {
-            val prev = samples[i - 1]
-            val cur = samples[i]
-            val dtSeconds = (cur.tNanos - prev.tNanos) / 1e9
-
-            val alpha = if (dtSeconds <= 0) 1f else (1.0 - exp(-2.0 * PI * cutoffHz * dtSeconds)).toFloat()
-            val raw = cur.toRawChannels()
-            val next = FloatArray(raw.size) { c -> state[c] + alpha * (raw[c] - state[c]) }
-            state = next
-            out.add(Filtered(cur.tNanos, next.copyOf()))
-        }
-        return out
-    }
-
-    private fun interpolate(filtered: List<Filtered>, tNanos: Long): FloatArray {
+    private fun lowerBound(a: LongArray, key: Long): Int {
         var lo = 0
-        var hi = filtered.size - 1
-        if (tNanos <= filtered[lo].tNanos) return filtered[lo].channels.copyOf()
-        if (tNanos >= filtered[hi].tNanos) return filtered[hi].channels.copyOf()
-        while (hi - lo > 1) {
-            val mid = (lo + hi) / 2
-            if (filtered[mid].tNanos <= tNanos) lo = mid else hi = mid
+        var hi = a.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (a[mid] < key) lo = mid + 1 else hi = mid
         }
-        val a = filtered[lo]
-        val b = filtered[hi]
-        val span = (b.tNanos - a.tNanos).toDouble()
-        val frac = if (span <= 0) 0.0 else (tNanos - a.tNanos) / span
-        return FloatArray(a.channels.size) { c -> (a.channels[c] + frac * (b.channels[c] - a.channels[c])).toFloat() }
+        return lo
     }
 }

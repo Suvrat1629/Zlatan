@@ -38,7 +38,6 @@ class RealEngine(
     private val ringBuffer = RingBuffer(ringBufferCapacitySamples)
     private val conditioning = ConditioningStage()
     private val decimator = Decimator(
-        cutoffHz = config.antiAliasCutoffHz,
         modelRateHz = config.modelRateHz,
         windowSamples = PositioningEngine.WINDOW_SAMPLES,
     )
