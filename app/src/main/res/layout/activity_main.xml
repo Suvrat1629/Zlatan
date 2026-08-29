@@ -23,50 +23,39 @@
          ?attr/colorSurface would vanish over a matching map tile.
          See .claude/skills/idr-android-ui §5. -->
 
+    <!-- Card stroke colour is set per Mode in MainActivity (idr-android-ui §4). -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/mode_badge_card"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_margin="@dimen/spacing_medium"
+        android:layout_marginStart="@dimen/spacing_medium"
+        android:layout_marginTop="@dimen/spacing_medium"
+        android:layout_marginEnd="@dimen/spacing_small"
         app:cardBackgroundColor="@color/hud_scrim"
         app:cardCornerRadius="@dimen/hud_corner_radius"
         app:cardElevation="@dimen/hud_elevation"
+        app:strokeWidth="2dp"
+        app:strokeColor="@color/idr_dead_reckoning"
+        app:layout_constrainedWidth="true"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/speed_card"
-        app:layout_constraintHorizontal_bias="0"
-        app:layout_constraintWidth_max="wrap">
+        app:layout_constraintHorizontal_bias="0">
 
-        <LinearLayout
+        <TextView
+            android:id="@+id/mode_badge"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:baselineAligned="false">
-
-            <!-- Accent bar: colour set per Mode in MainActivity -->
-            <View
-                android:id="@+id/mode_accent"
-                android:layout_width="5dp"
-                android:layout_height="match_parent"
-                android:minHeight="40dp"
-                android:background="@color/idr_mode_init" />
-
-            <TextView
-                android:id="@+id/mode_badge"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:paddingStart="@dimen/hud_padding_h"
-                android:paddingEnd="@dimen/hud_padding_h"
-                android:paddingTop="@dimen/hud_padding_v"
-                android:paddingBottom="@dimen/hud_padding_v"
-                android:textColor="@color/hud_on_scrim"
-                android:textAppearance="?attr/textAppearanceTitleMedium"
-                android:textStyle="bold"
-                android:text="@string/mode_init"
-                tools:text="GPS lost — still tracking you  0 sats" />
-
-        </LinearLayout>
+            android:gravity="center_vertical"
+            android:paddingStart="@dimen/hud_padding_h"
+            android:paddingEnd="@dimen/hud_padding_h"
+            android:paddingTop="@dimen/hud_padding_v"
+            android:paddingBottom="@dimen/hud_padding_v"
+            android:textColor="@color/hud_on_scrim"
+            android:textAppearance="?attr/textAppearanceTitleMedium"
+            android:textStyle="bold"
+            android:text="@string/mode_init"
+            tools:text="GPS lost — still tracking you  0 sats" />
 
     </com.google.android.material.card.MaterialCardView>
 

@@ -44,7 +44,7 @@ class MainActivity : AppCompatActivity() {
     private var bound = false
     private lateinit var mapRenderer: MapRenderer
     private lateinit var modeBadge: TextView
-    private lateinit var modeAccent: View
+    private lateinit var modeBadgeCard: com.google.android.material.card.MaterialCardView
     private lateinit var speedText: TextView
     private lateinit var driftText: TextView
     private lateinit var muteToggle: Button
@@ -94,7 +94,7 @@ class MainActivity : AppCompatActivity() {
         mapRenderer.attach(findViewById(R.id.map_container))
 
         modeBadge = findViewById(R.id.mode_badge)
-        modeAccent = findViewById(R.id.mode_accent)
+        modeBadgeCard = findViewById(R.id.mode_badge_card)
         speedText = findViewById(R.id.speed_text)
         driftText = findViewById(R.id.drift_text)
         applyWindowInsets()
@@ -196,9 +196,8 @@ class MainActivity : AppCompatActivity() {
                             append(" sats")
                             if (s.irnssSatsInFix > 0) append(" (NavIC ${s.irnssSatsInFix})")
                         }
-                        modeAccent.setBackgroundColor(
+                        modeBadgeCard.strokeColor =
                             ContextCompat.getColor(this@MainActivity, modeAccentColor(s.mode))
-                        )
                         speedText.text = getString(R.string.speed_format, s.speedMps * 3.6f)
                         service?.updateNotification(s.mode)
                     }
