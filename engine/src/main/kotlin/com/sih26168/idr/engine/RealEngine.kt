@@ -144,7 +144,12 @@ class RealEngine(
 
         val fix = pendingGnssFix.getAndSet(null)
         if (fix != null) {
-            headingEstimator.seedFromGnssCourse(fix.bearingDeg)
+            // Only reseed heading from a fix that actually carries course information:
+            // GNSS bearing is meaningless when not moving, and coarse (position-only) fixes
+            // report speed/bearing as 0 — seeding from those would snap heading to north.
+            if (fix.speedMps > 1.0f) {
+                headingEstimator.seedFromGnssCourse(fix.bearingDeg)
+            }
             fusionFilter.updateWithGnss(LatLon(fix.lat, fix.lon), fix.speedMps, fix.bearingDeg, fix.horizAccM)
         }
 

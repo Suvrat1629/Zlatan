@@ -50,20 +50,31 @@ class GnssSource(
         if (gnssMuted) return@LocationListener
 
         val accuracyM = if (location.hasAccuracy()) location.accuracy else null
-        if (accuracyM != null && accuracyM > MAX_ACCEPTABLE_ACCURACY_M) {
-            System.err.println("[GnssSource] rejected fix with accuracy ${accuracyM}m (multipath/poor geometry) — over ${MAX_ACCEPTABLE_ACCURACY_M}m threshold")
+
+        // Tiered acceptance:
+        //  - <= MAX_ACCEPTABLE_ACCURACY_M and enough sats: full-trust fix (position+speed+bearing).
+        //  - <= COARSE_ACCURACY_M: coarse position-only snap. Without this, a user indoors sits
+        //    at a stale position ("wrong galaxy") until a clean fix arrives; a 30-150 m indoor
+        //    fix is still vastly better than kilometres-stale. Speed/bearing are zeroed so the
+        //    weak fix can't steer heading or velocity, and the reported horizAcc lets the
+        //    fusion side de-weight it.
+        //  - worse than COARSE_ACCURACY_M: rejected.
+        val fullTrust = (accuracyM == null || accuracyM <= MAX_ACCEPTABLE_ACCURACY_M) &&
+            (satsInFix == 0 || satsInFix >= MIN_SATS_FOR_TRUST)
+        val coarse = !fullTrust && accuracyM != null && accuracyM <= COARSE_ACCURACY_M
+        if (!fullTrust && !coarse) {
+            System.err.println("[GnssSource] rejected fix (accuracy=${accuracyM}m sats=$satsInFix) — worse than coarse threshold ${COARSE_ACCURACY_M}m")
             return@LocationListener
         }
-        if (satsInFix in 1 until MIN_SATS_FOR_TRUST) {
-            System.err.println("[GnssSource] rejected fix with only $satsInFix satellites — under ${MIN_SATS_FOR_TRUST} sats, geometry too weak to trust (this is exactly what causes standing-still jitter)")
-            return@LocationListener
+        if (coarse) {
+            System.err.println("[GnssSource] coarse fix accepted for position-only snap (accuracy=${accuracyM}m sats=$satsInFix)")
         }
 
         engine.onGnssFix(
             tNanos = nowElapsedRealtimeNanos,
             lat = location.latitude, lon = location.longitude,
-            speedMps = if (location.hasSpeed()) location.speed else 0f,
-            bearingDeg = if (location.hasBearing()) location.bearing else 0f,
+            speedMps = if (fullTrust && location.hasSpeed()) location.speed else 0f,
+            bearingDeg = if (fullTrust && location.hasBearing()) location.bearing else 0f,
             horizAccM = accuracyM ?: 999f,
             satsInFix = satsInFix, irnssSatsInFix = irnssSatsInFix,
         )
@@ -97,6 +108,7 @@ class GnssSource(
 
     companion object {
         private const val MAX_ACCEPTABLE_ACCURACY_M = 30f
+        private const val COARSE_ACCURACY_M = 150f
         private const val MIN_SATS_FOR_TRUST = 4
     }
 }
