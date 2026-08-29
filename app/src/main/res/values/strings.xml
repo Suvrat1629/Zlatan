@@ -20,4 +20,22 @@
     <string name="open_settings">Open settings</string>
     <string name="grant_permission">Grant permission</string>
     <string name="no_gyroscope_error">This device has no gyroscope. IDR can\'t function without one.</string>
+
+    <string name="calibrate_compass">Calibrate compass</string>
+    <string name="calibration_title">Compass calibration</string>
+    <string name="calibration_instruction">Rotate your phone through a figure-8 motion, tilting it through as many directions as you can.</string>
+    <string name="calibration_heading_format">%.0f°</string>
+    <string name="calibration_coverage_label">Direction coverage</string>
+    <string name="calibration_consistency_label">Consistency</string>
+    <string name="calibration_field_label">Signal strength</string>
+    <string name="calibration_field_value_format">%.0f µT</string>
+    <string name="calibration_status_low_coverage">Tilt the phone through more directions</string>
+    <string name="calibration_status_noisy">Keep rotating steadily to settle the reading</string>
+    <string name="calibration_status_weak_field">Move away from metal or magnets and try again</string>
+    <string name="calibration_status_ready">Looks good — you can finish now</string>
+    <string name="calibration_finish_button">Finish</string>
+    <string name="calibration_saved_toast">Compass calibration saved</string>
+    <string name="calibration_last_calibrated_format">Last calibrated %s</string>
+    <string name="calibration_never">Not calibrated yet</string>
+    <string name="calibration_unsupported">This device doesn\'t have the sensors needed for compass calibration.</string>
 </resources>

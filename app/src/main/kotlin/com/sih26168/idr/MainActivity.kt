@@ -125,6 +125,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<ImageButton>(R.id.recenter_button).setOnClickListener {
             mapRenderer.recenter()
         }
+        findViewById<ImageButton>(R.id.calibrate_compass_button).setOnClickListener {
+            startActivity(Intent(this, MagnetometerCalibrationActivity::class.java))
+        }
 
         requestNeededPermissionsThenStart()
     }
