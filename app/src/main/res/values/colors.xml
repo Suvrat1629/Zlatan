@@ -1,0 +1,9 @@
+<resources>
+    <color name="idr_primary">#1565C0</color>
+    <color name="idr_primary_dark">#0D47A1</color>
+    <color name="idr_accent">#FF6F00</color>
+    <color name="idr_dead_reckoning">#FF8F00</color>
+    <color name="idr_navic">#2E7D32</color>
+    <color name="idr_background">#FFFFFF</color>
+    <color name="ic_launcher_background">#1565C0</color>
+</resources>

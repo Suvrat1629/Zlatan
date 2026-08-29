@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A simple stand-in mark: the position dot with a short trail, echoing the
+         "moving dot that never freezes" product promise. Swap for a real icon later. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M30,80 C40,65 50,55 62,44" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:pathData="M30,80 L62,44" />
+    <path
+        android:fillColor="#FF6F00"
+        android:pathData="M62,44 m-14,0 a14,14 0 1,0 28,0 a14,14 0 1,0 -28,0" />
+</vector>

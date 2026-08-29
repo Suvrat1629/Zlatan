@@ -1,0 +1,20 @@
+{
+  "_comment": "Template manifest for app/src/main/assets/engine.tflite, which is NOT shipped in this build (see assets/README.md). Values below are the real, current-as-of-2026-08-29 numbers from docs/model-app-integration-answers.md A9/A10/A12 (round3-tf-baseline) — drop this file's sha256 in once you have the real .tflite, or leave it blank to skip the checksum check (AssetProvider treats a blank sha256 as 'not asserted', not 'invalid').",
+  "asset_id": "speed_model",
+  "version": "round3-tf-baseline",
+  "sha256": "",
+  "asset_type": "SPEED_MODEL",
+  "tensor_shapes": { "imu_window": [1, 50, 7], "speed": [1, 1] },
+  "tensor_dtypes": { "imu_window": "float32", "speed": "float32" },
+  "channel_order": ["a_horiz", "a_vert", "a_lin_mag", "gyr_y", "gyr_p", "gyr_r", "gyro_mag"],
+  "gravity_handling": "accel_minus_gravity",
+  "window_samples": 50,
+  "stride_samples": 1,
+  "expected_rate_hz": 10.0,
+  "input_norm": {
+    "mean": [1.6039, 0.0405, 1.7428, -0.0004, -0.0031, 0.0001, 0.1939],
+    "std":  [1.5529, 0.7247, 1.5759, 0.1148, 0.2310, 0.1372, 0.2196]
+  },
+  "output_norm": { "method": "none" },
+  "min_engine_version": "0.1.0-phase0"
+}

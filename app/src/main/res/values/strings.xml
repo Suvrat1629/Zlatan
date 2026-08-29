@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">IDR</string>
+    <string name="mode_init">Starting…</string>
+    <string name="mode_navic">NavIC</string>
+    <string name="mode_gnss">GNSS</string>
+    <string name="mode_degraded">Degraded fix</string>
+    <string name="mode_dead_reckoning">GPS lost — still tracking you</string>
+    <string name="permission_rationale">Location and motion-sensor access are required to track your position, including through GNSS blackouts (tunnels, parking, urban canyons).</string>
+    <string name="gnss_mute_toggle">Simulate GNSS loss</string>
+    <string name="gnss_unmute_toggle">Restore GNSS</string>
+    <string name="record_trip">Record trip</string>
+    <string name="stop_recording">Stop recording</string>
+    <string name="speed_format">%.0f km/h</string>
+</resources>

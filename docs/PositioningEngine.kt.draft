@@ -1,0 +1,187 @@
+package com.sih26168.idr.core.types
+
+import kotlinx.coroutines.flow.StateFlow
+
+/**
+ * SIH26168 — Intelligent Dead Reckoning with GNSS Fusion.
+ *
+ * ============================================================================
+ *  THE SEAM between the positioning engine and the rest of the app.
+ *  DRAFT PROPOSAL — NOT FROZEN. See "open items" below.
+ * ============================================================================
+ *
+ * Lives in :core-types (pure Kotlin, no android.*). Matches the "PositioningEngine-shaped
+ * interface with a real impl + a stub from commit one" called for in
+ * Aneesh/SIH-IDR-android.md §"The seam".
+ *
+ * Implemented by (integrator):
+ *   - StubEngine  : holds last known GNSS speed (safe; does not diverge like raw double
+ *                   integration). Build the whole app against this before the model exists.
+ *   - RealEngine  : ring buffer -> conditioning -> anti-alias decimate -> (features +
+ *                   normalize | raw window) -> engine.tflite -> heading / DR / NHC / EKF /
+ *                   map-match -> pose.
+ *
+ * Called by (app team, per Aneesh/SIH-IDR-android.md §§2,4,5):
+ *   - :android-sensors : registers accel + gravity + gyro at the HIGHEST reliable device
+ *                        rate, on a dedicated handler thread, maxReportLatencyUs = 0,
+ *                        copies SensorEvent.values immediately, pushes into [onImuSample].
+ *   - :app GNSS layer  : RAW LocationManager GPS_PROVIDER (NOT FusedLocationProviderClient)
+ *                        + GnssStatus.Callback -> [onGnssFix] / [onGnssLost].
+ *   - the UI           : observes [state], renders icon + uncertainty ellipse + mode badge.
+ *
+ * ---------------------------------------------------------------------------
+ *  MODEL FACTS (13-ANSWERS-Model-Team.md A2/A3/A12; Round-4 TCN, 12-Model-Results.md):
+ *  - model input  : [1, WINDOW_SAMPLES, features] float32 (5 s window; features per F1)
+ *  - model output : forward speed in m/s (float32, already de-normalized)
+ *  - architecture : TCN, builtins-only (no SELECT_TF_OPS)
+ *  The 10 Hz in the problem statement is the *output* rate, NOT a sampling rate —
+ *  sensors are sampled fast and the engine decimates (Aneesh §4).
+ * ---------------------------------------------------------------------------
+ *
+ *  THREADING CONTRACT
+ *  - [onImuSample] / [onGnssFix] / [onGnssLost] are called from background threads and
+ *    MUST return fast. MUST NOT be called on the main/UI thread. IMU samples are never
+ *    dropped by the caller — a missing sample is a gap in an integral.
+ *  - [state] is updated at the output rate from the engine's own thread. Collect it
+ *    lifecycle-aware on the UI thread.
+ *  - [start] / [stop] are called by the hosting foreground service, which is the single
+ *    owner of engine lifetime.
+ *
+ *  OPEN ITEMS before this can freeze as v1:
+ *  - F1: if the model team bakes features + normalization INTO the .tflite graph
+ *        (Aneesh §13.3 preferred), [onImuSample] loses the gravity channel and becomes a
+ *        raw accel+gyro window. Decide before freezing.
+ *  - F3: gyro may become TYPE_GYROSCOPE_UNCALIBRATED (own bias estimation) depending on
+ *        what IO-VNBD training used.
+ *  - [Pose] shape is OWNED BY the fusion seat (M2), not the integrator. They may want a
+ *        full covariance, not a scalar. Needs their sign-off.
+ *  - No navigation constants in code (Aneesh rule 4): only structural constants
+ *        (tensor shape) stay here; rates / window-seconds / thresholds move to config.
+ */
+interface PositioningEngine {
+
+    /** Begin consuming samples and emitting [state]. Idempotent. */
+    fun start()
+
+    /** Stop the engine and release the model / threads. Idempotent. */
+    fun stop()
+
+    /**
+     * One inertial sample. Called on every accelerometer event, carrying the most recent
+     * gravity and gyro readings (sample-and-hold). RAW device frame, phone units — the
+     * app does NO transform, filtering, gravity correction or rescaling.
+     *
+     * @param tNanos  `SensorEvent.timestamp`, nanoseconds since boot. The caller validates
+     *                the base against `elapsedRealtimeNanos()` at startup.
+     * @param ax,ay,az    accelerometer, m/s^2, gravity INCLUDED.
+     * @param grx,gry,grz  `TYPE_GRAVITY`, m/s^2. (Dropped if F1 → features-in-graph.)
+     * @param gx,gy,gz     gyroscope, rad/s, right-hand rule.
+     */
+    fun onImuSample(
+        tNanos: Long,
+        ax: Float, ay: Float, az: Float,
+        grx: Float, gry: Float, grz: Float,
+        gx: Float, gy: Float, gz: Float,
+    )
+
+    /**
+     * A GNSS position fix from the RAW GPS provider (~1 Hz).
+     *
+     * @param tNanos           `elapsedRealtimeNanos()` at delivery.
+     * @param lat,lon          degrees, WGS-84.
+     * @param speedMps         `Location.speed` if present, else 0 (also a Doppler speed label).
+     * @param bearingDeg       `Location.bearing` (course over ground) if present, else 0.
+     * @param horizAccM        `Location.accuracy` (68% horizontal), metres; 999 if unknown.
+     * @param satsInFix        satellites with `usedInFix == true`.
+     * @param irnssSatsInFix   subset with `CONSTELLATION_IRNSS` (== NavIC).
+     *
+     * TODO (M2 quality gate, Aneesh §5): also carry the C/N0 distribution, fix geometry,
+     * and raw GNSS measurements where available. A fix alone never reveals it is multipath.
+     */
+    fun onGnssFix(
+        tNanos: Long,
+        lat: Double, lon: Double,
+        speedMps: Float, bearingDeg: Float, horizAccM: Float,
+        satsInFix: Int, irnssSatsInFix: Int,
+    )
+
+    /**
+     * GNSS is no longer trusted — the mode arbiter has moved to DEGRADED or DEAD_RECKONING.
+     * The exact rule is M2's (Aneesh §5: gate on C/N0, sat count, geometry AND filter
+     * innovation — never on "no fix" alone). The caller applies it and calls this.
+     */
+    fun onGnssLost(tNanos: Long)
+
+    /** The engine's current best estimate. Updated at the output rate. Observe on the UI thread. */
+    val state: StateFlow<PositionState>
+
+    companion object {
+        /** Samples per model window (structural — tensor shape). Value confirmed via the
+         *  model manifest at load; this is the compile-time expectation. */
+        const val WINDOW_SAMPLES = 50
+
+        /** Engineered features fed to the model, if F1 → Kotlin port. Confirmed via manifest.
+         *  [a_horiz, a_vert, a_lin_mag, gyro_x, gyro_y, gyro_z, gyro_mag] (13-ANSWERS A3). */
+        const val FEATURES = 7
+
+        /** Raw channels per [onImuSample]: accel(3) + gravity(3) + gyro(3).
+         *  Becomes 6 if F1 → features-in-graph. */
+        const val RAW_CHANNELS = 9
+
+        // Rates, window-in-seconds, speed clamps, handover thresholds: NOT here.
+        // They live in the versioned config file (Aneesh rule 4).
+    }
+}
+
+/**
+ * Which positioning source the mode arbiter is currently trusting (Aneesh §5).
+ * Shown on the mode badge; drives the two-colour breadcrumb trail.
+ */
+enum class Mode {
+    /** Warming up — no full model window yet; falling back to GNSS speed. */
+    INIT,
+
+    /** Trusted satellite fix, NavIC (IRNSS) satellites contributing. */
+    NAVIC,
+
+    /** Trusted satellite fix, no NavIC contribution. */
+    GNSS,
+
+    /** Fixes arriving but failing quality / innovation gating — dropped or heavily
+     *  de-weighted. Bad fixes are worse than no fix. */
+    DEGRADED,
+
+    /** No trusted GNSS — position from inertial dead reckoning only. */
+    DEAD_RECKONING,
+}
+
+/**
+ * The engine's output pose, published on [PositioningEngine.state].
+ *
+ * ⚠️ SHAPE OWNED BY M2 (the fusion seat) — this is the integrator's straw-man.
+ * M2 may replace [uncertaintyM] with a covariance matrix / ellipse parameters.
+ *
+ * @param lat,lon         current estimated position, degrees WGS-84.
+ * @param speedMps        current forward speed estimate, m/s.
+ * @param headingDeg      current heading, degrees, 0 = North, clockwise. 0 until a
+ *                        heading estimator exists (Part C — no owner yet).
+ * @param mode            see [Mode].
+ * @param satsInFix       satellites in the last fix (0 during blackout).
+ * @param irnssSatsInFix  NavIC satellites in the last fix.
+ * @param uncertaintyM    1-sigma horizontal position uncertainty, metres, from the EKF
+ *                        covariance once fusion is wired. Drives the uncertainty ellipse
+ *                        and the demo drift meter.
+ * @param engineTickMs    wall time of the last engine tick, ms — perf watchdog for the
+ *                        output-rate budget (target p95 < 50 ms).
+ */
+data class PositionState(
+    val lat: Double = 0.0,
+    val lon: Double = 0.0,
+    val speedMps: Float = 0f,
+    val headingDeg: Float = 0f,
+    val mode: Mode = Mode.INIT,
+    val satsInFix: Int = 0,
+    val irnssSatsInFix: Int = 0,
+    val uncertaintyM: Float = 0f,
+    val engineTickMs: Float = 0f,
+)

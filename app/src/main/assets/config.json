@@ -1,0 +1,14 @@
+{
+  "_comment": "Every navigation-relevant number the engine uses — Aneesh/SIH-IDR-android.md §10: 'No numeric constant relevant to navigation appears in Kotlin source.' See EngineConfig.kt for what each field means and where the value came from.",
+  "model_rate_hz": 10.0,
+  "window_seconds": 5.0,
+  "anti_alias_cutoff_hz": 4.0,
+  "ring_buffer_seconds": 8.0,
+  "cold_start_seconds": 5.0,
+  "speed_min_mps": 0.0,
+  "speed_max_mps": 60.0,
+  "gnss_lost_no_fix_timeout_ms": 3000,
+  "handover_slew_seconds": 1.5,
+  "output_rate_hz": 10.0,
+  "engine_tick_p95_budget_ms": 50.0
+}
