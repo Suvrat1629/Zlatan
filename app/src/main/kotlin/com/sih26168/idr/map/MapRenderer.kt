@@ -17,9 +17,6 @@ interface MapRenderer {
 
     fun appendPlainGpsPoint(lat: Double, lon: Double)
 
-    /** Wipe all drawn trails (our segments + the plain-GPS compare trail). */
-    fun clearTrail()
-
     fun setCompareMode(enabled: Boolean)
 
     fun recenter()

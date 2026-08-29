@@ -31,25 +31,9 @@ class RealEngine(
     private val headingEstimator: HeadingEstimator = GyroIntegrationHeadingEstimator(),
     private val fusionFilter: FusionFilter = PassthroughFusionFilter(startAt),
     private val mapMatcher: MapMatcher = NoOpMapMatcher(),
-    private val traceCsv: java.io.File? = null,
 
     ringBufferCapacitySamples: Int = 4000,
 ) : PositioningEngine {
-
-    // Full-rate trace. Rows always stream to logcat tagged "IDR-CSV," (capture on the PC);
-    // if a traceCsv File is also given, the same rows are written on-device.
-    private val csvHeader =
-        "wallclock_ms,t_end_nanos,mode,pitch_deg,roll_deg,raw_acc_mps2,lin_acc_mps2," +
-            "gyro_mag_rps,stationary,model_speed_mps,published_speed_mps,heading_deg," +
-            "lat,lon,d_east_m,d_north_m,dist_from_origin_m,sats,navic"
-    private val csvWriter: java.io.BufferedWriter? = traceCsv?.let { file ->
-        file.parentFile?.mkdirs()
-        System.out.println("IDR-TRACE also writing CSV on device: ${file.absolutePath}")
-        file.bufferedWriter().apply { write(csvHeader); newLine(); flush() }
-    }.also {
-        // header for the PC-side capture
-        System.out.println("IDR-CSV,$csvHeader")
-    }
 
     private val ringBuffer = RingBuffer(ringBufferCapacitySamples)
     private val conditioning = ConditioningStage()
@@ -58,7 +42,6 @@ class RealEngine(
         modelRateHz = config.modelRateHz,
         windowSamples = PositioningEngine.WINDOW_SAMPLES,
     )
-    private val origin = startAt   // start position, for logging displacement from origin
     private val deadReckoner = DeadReckoner(startAt)
     private val modeArbiter = ModeArbiter(config.gnssLostNoFixTimeoutMs)
 
@@ -66,9 +49,6 @@ class RealEngine(
     override val state: StateFlow<PositionState> = _state.asStateFlow()
 
     @Volatile private var lastGyroZ = 0f
-    private var tickCount = 0
-    private val LOG_EVERY_N_TICKS = 5   // ~2 logs/sec at 10 Hz
-    @Volatile private var smoothedSpeed = 0f
     private val pendingGnssFix = AtomicReference<GnssFixRecord?>(null)
     private val lastKnownGnssSpeedMps = AtomicReference(0f)
 
@@ -92,7 +72,6 @@ class RealEngine(
         running = false
         scheduler.shutdown()
         speedEstimator.close()
-        try { csvWriter?.flush(); csvWriter?.close() } catch (e: Exception) { /* ignore */ }
     }
 
     private fun safeTick() {
@@ -144,12 +123,7 @@ class RealEngine(
 
         val fix = pendingGnssFix.getAndSet(null)
         if (fix != null) {
-            // Only reseed heading from a fix that actually carries course information:
-            // GNSS bearing is meaningless when not moving, and coarse (position-only) fixes
-            // report speed/bearing as 0 — seeding from those would snap heading to north.
-            if (fix.speedMps > 1.0f) {
-                headingEstimator.seedFromGnssCourse(fix.bearingDeg)
-            }
+            headingEstimator.seedFromGnssCourse(fix.bearingDeg)
             fusionFilter.updateWithGnss(LatLon(fix.lat, fix.lon), fix.speedMps, fix.bearingDeg, fix.horizAccM)
         }
 
@@ -166,24 +140,7 @@ class RealEngine(
 
         val features = FeatureExtractor.featureWindow(rawWindow)
         val normalized = normalizer.apply(features)
-        // ZUPT: a stationary phone still yields a non-zero model speed; clamp it to 0 so the
-        // dot doesn't drift forever while parked / indoors (no GNSS to correct it).
-        val stationary = ZeroVelocityDetector.isStationary(
-            features, config.zuptAccelThresholdMps2, config.zuptGyroThresholdRps,
-        )
-        val rawModelSpeed = speedEstimator.estimate(normalized)
-        val instantSpeed = if (stationary) {
-            0f
-        } else {
-            rawModelSpeed.coerceIn(config.speedMinMps, config.speedMaxMps)
-        }
-        // Exponential smoothing tames the model's spiky output (a single jumpy estimate would
-        // otherwise lurch the dot). Decays toward 0 on its own when ZUPT holds instantSpeed at 0.
-        val a = config.speedSmoothingAlpha
-        smoothedSpeed = a * instantSpeed + (1f - a) * smoothedSpeed
-        // Deadband: sub-walking-pace speeds are model leakage, not real vehicle motion —
-        // publishing them makes the dot creep in whatever direction the heading points.
-        val speedMps = if (smoothedSpeed < config.speedDeadbandMps) 0f else smoothedSpeed
+        val speedMps = speedEstimator.estimate(normalized).coerceIn(config.speedMinMps, config.speedMaxMps)
 
         val dtSeconds = 1.0 / config.outputRateHz
         headingEstimator.predict(lastGyroZ, dtSeconds)
@@ -194,46 +151,6 @@ class RealEngine(
         val fused = fusionFilter.estimate()
         val matched = mapMatcher.snap(fused)
         deadReckoner.reset(matched)
-
-        // ---- diagnostics: computed every tick, CSV full-rate, logcat throttled ----
-        var aLin = 0f; var gyroMag = 0f
-        for (row in features) { aLin += row[2]; gyroMag += row[6] }
-        aLin /= features.size; gyroMag /= features.size
-        // tilt + raw accel from the newest raw sample [ax,ay,az,grx,gry,grz,gx,gy,gz]
-        val last = rawWindow.last()
-        val grx = last[3]; val gry = last[4]; val grz = last[5]
-        val pitchDeg = Math.toDegrees(kotlin.math.atan2(-grx.toDouble(),
-            kotlin.math.sqrt((gry * gry + grz * grz).toDouble())))
-        val rollDeg = Math.toDegrees(kotlin.math.atan2(gry.toDouble(), grz.toDouble()))
-        val rawAccMag = kotlin.math.sqrt((last[0] * last[0] + last[1] * last[1] + last[2] * last[2]).toDouble())
-        // displacement of the navigator from the origin (equirectangular metres)
-        val dNorth = (matched.lat - origin.lat) * 111_320.0
-        val dEast = (matched.lon - origin.lon) * 111_320.0 * kotlin.math.cos(Math.toRadians(origin.lat))
-        val distFromOrigin = kotlin.math.sqrt(dNorth * dNorth + dEast * dEast)
-        val mode = modeArbiter.currentMode(tEndNanos)
-        val sats = modeArbiter.satsInFix(); val navic = modeArbiter.irnssSatsInFix()
-
-        val csvRow = "${System.currentTimeMillis()},$tEndNanos,$mode," +
-            "${"%.2f".format(pitchDeg)},${"%.2f".format(rollDeg)}," +
-            "${"%.3f".format(rawAccMag)},${"%.3f".format(aLin)},${"%.4f".format(gyroMag)},$stationary," +
-            "${"%.3f".format(rawModelSpeed)},${"%.3f".format(speedMps)},${"%.1f".format(headingDeg)}," +
-            "${"%.7f".format(matched.lat)},${"%.7f".format(matched.lon)}," +
-            "${"%.1f".format(dEast)},${"%.1f".format(dNorth)},${"%.1f".format(distFromOrigin)},$sats,$navic"
-        System.out.println("IDR-CSV,$csvRow")   // captured into a CSV on the PC via logcat
-        csvWriter?.apply { write(csvRow); newLine() }
-        if (tickCount++ % LOG_EVERY_N_TICKS == 0) {
-            csvWriter?.flush()
-            System.out.println(
-                "IDR-TICK mode=$mode " +
-                    "tilt(pitch=${"%.0f".format(pitchDeg)} roll=${"%.0f".format(rollDeg)})deg " +
-                    "acc(raw=${"%.2f".format(rawAccMag)} lin=${"%.3f".format(aLin)})m/s2 " +
-                    "gyroMag=${"%.4f".format(gyroMag)}rad/s stationary=$stationary " +
-                    "modelSpeed=${"%.2f".format(rawModelSpeed)} published=${"%.2f".format(speedMps)}m/s(${"%.1f".format(speedMps * 3.6f)}km/h) " +
-                    "hdg=${"%.0f".format(headingDeg)}deg " +
-                    "origin(dE=${"%.1f".format(dEast)} dN=${"%.1f".format(dNorth)} dist=${"%.1f".format(distFromOrigin)})m " +
-                    "sats=$sats navic=$navic"
-            )
-        }
 
         publish(
             lat = matched.lat, lon = matched.lon, speedMps = speedMps, headingDeg = headingDeg.toFloat(),

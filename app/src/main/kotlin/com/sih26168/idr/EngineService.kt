@@ -58,25 +58,10 @@ class EngineService : Service() {
     private fun lastKnownLocation(): LatLon? {
         val locationManager = getSystemService(LocationManager::class.java) ?: return null
         return try {
-            // Check every available provider, not just GPS/NETWORK. PASSIVE returns the last
-            // fix ANY app received (e.g. Google Maps) and FUSED (API 31+) is the blended
-            // provider — either can seed us near the user indoors, instead of the Bangalore
-            // default. Take the most recent across all of them.
-            val providers = buildList {
-                add(LocationManager.GPS_PROVIDER)
-                add(LocationManager.NETWORK_PROVIDER)
-                add(LocationManager.PASSIVE_PROVIDER)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) add(LocationManager.FUSED_PROVIDER)
-            }
-            providers.mapNotNull { provider ->
-                try {
-                    if (locationManager.isProviderEnabled(provider)) {
-                        locationManager.getLastKnownLocation(provider)
-                    } else null
-                } catch (e: Exception) {
-                    null
-                }
-            }.maxByOrNull { it.time }?.let { LatLon(it.latitude, it.longitude) }
+            val fromGps = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            val fromNetwork = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            val best = listOfNotNull(fromGps, fromNetwork).maxByOrNull { it.time }
+            best?.let { LatLon(it.latitude, it.longitude) }
         } catch (e: SecurityException) {
             null
         }
