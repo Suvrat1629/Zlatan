@@ -42,6 +42,7 @@ class RealEngine(
         modelRateHz = config.modelRateHz,
         windowSamples = PositioningEngine.WINDOW_SAMPLES,
     )
+    private val origin = startAt   // start position, for logging displacement from origin
     private val deadReckoner = DeadReckoner(startAt)
     private val modeArbiter = ModeArbiter(config.gnssLostNoFixTimeoutMs)
 
@@ -164,25 +165,40 @@ class RealEngine(
         headingEstimator.predict(lastGyroZ, dtSeconds)
         val headingDeg = headingEstimator.headingDeg()
 
-        // Real-time diagnostics — view with:  adb logcat -s System.out | grep IDR-TICK
-        if (tickCount++ % LOG_EVERY_N_TICKS == 0) {
-            var aLin = 0f; var gyroMag = 0f
-            for (row in features) { aLin += row[2]; gyroMag += row[6] }
-            aLin /= features.size; gyroMag /= features.size
-            System.out.println(
-                "IDR-TICK mode=${modeArbiter.currentMode(tEndNanos)} " +
-                    "aLinMag=${"%.3f".format(aLin)} gyroMag=${"%.4f".format(gyroMag)} " +
-                    "stationary=$stationary modelSpeed=${"%.2f".format(rawModelSpeed)} " +
-                    "published=${"%.2f".format(speedMps)}m/s (${"%.1f".format(speedMps * 3.6f)}km/h) " +
-                    "hdg=${"%.0f".format(headingDeg)} sats=${modeArbiter.satsInFix()} navic=${modeArbiter.irnssSatsInFix()}"
-            )
-        }
-
         val deadReckoned = deadReckoner.step(speedMps, headingDeg, dtSeconds)
         fusionFilter.predict(deadReckoned, speedMps, headingDeg, dtSeconds)
         val fused = fusionFilter.estimate()
         val matched = mapMatcher.snap(fused)
         deadReckoner.reset(matched)
+
+        // Real-time diagnostics — view with:  adb logcat -s System.out:I | grep IDR-TICK
+        if (tickCount++ % LOG_EVERY_N_TICKS == 0) {
+            // motion energy from the feature window (means)
+            var aLin = 0f; var gyroMag = 0f
+            for (row in features) { aLin += row[2]; gyroMag += row[6] }
+            aLin /= features.size; gyroMag /= features.size
+            // tilt + raw accel from the newest raw sample [ax,ay,az,grx,gry,grz,gx,gy,gz]
+            val last = rawWindow.last()
+            val grx = last[3]; val gry = last[4]; val grz = last[5]
+            val pitchDeg = Math.toDegrees(kotlin.math.atan2(-grx.toDouble(),
+                kotlin.math.sqrt((gry * gry + grz * grz).toDouble())))
+            val rollDeg = Math.toDegrees(kotlin.math.atan2(gry.toDouble(), grz.toDouble()))
+            val rawAccMag = kotlin.math.sqrt((last[0] * last[0] + last[1] * last[1] + last[2] * last[2]).toDouble())
+            // displacement of the navigator from the origin (equirectangular metres)
+            val dNorth = (matched.lat - origin.lat) * 111_320.0
+            val dEast = (matched.lon - origin.lon) * 111_320.0 * kotlin.math.cos(Math.toRadians(origin.lat))
+            val distFromOrigin = kotlin.math.sqrt(dNorth * dNorth + dEast * dEast)
+            System.out.println(
+                "IDR-TICK mode=${modeArbiter.currentMode(tEndNanos)} " +
+                    "tilt(pitch=${"%.0f".format(pitchDeg)} roll=${"%.0f".format(rollDeg)})deg " +
+                    "acc(raw=${"%.2f".format(rawAccMag)} lin=${"%.3f".format(aLin)})m/s2 " +
+                    "gyroMag=${"%.4f".format(gyroMag)}rad/s stationary=$stationary " +
+                    "modelSpeed=${"%.2f".format(rawModelSpeed)} published=${"%.2f".format(speedMps)}m/s(${"%.1f".format(speedMps * 3.6f)}km/h) " +
+                    "hdg=${"%.0f".format(headingDeg)}deg " +
+                    "origin(dE=${"%.1f".format(dEast)} dN=${"%.1f".format(dNorth)} dist=${"%.1f".format(distFromOrigin)})m " +
+                    "sats=${modeArbiter.satsInFix()} navic=${modeArbiter.irnssSatsInFix()}"
+            )
+        }
 
         publish(
             lat = matched.lat, lon = matched.lon, speedMps = speedMps, headingDeg = headingDeg.toFloat(),
