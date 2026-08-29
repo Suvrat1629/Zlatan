@@ -122,6 +122,23 @@ stage**, not an incidental one. It must include anti-alias low-pass filtering: h
 folded into the retained band corrupts the low-frequency data that is being kept, not just the
 high-frequency data being discarded.
 
+### Additional sensors
+
+The magnetometer and barometer are both ingested, both narrowly used.
+
+**Magnetometer.** Named as a live input in the problem statement, and close to useless inside a steel
+vehicle body — so ingest it and weight it honestly rather than dropping it. Calibrate hard and soft iron by
+fitting an ellipsoid to field measurements over a drive. Detect disturbance by comparing measured field
+magnitude and the dip angle between field and gravity against an offline geomagnetic reference model; a
+field of the wrong strength or inclination is disturbed and rejected. Use it only for initial yaw when
+stationary with no GNSS, and as a heavily de-weighted heading prior on long straights when the test
+passes.
+
+**Barometer.** Floor detection in multi-level parking, using *relative* pressure change over minutes only —
+absolute altitude drifts with weather and is unusable. Corroborate with integrated yaw during ramp transit.
+Verify the barometer's resolution on the actual test phones and measure the real inter-floor height rather
+than assuming a standard value.
+
 ### Sensor selection
 
 - Prefer `TYPE_ACCELEROMETER_UNCALIBRATED` and `TYPE_GYROSCOPE_UNCALIBRATED`. They expose the raw reading
@@ -182,6 +199,23 @@ This callback serves three purposes at once:
   GNSS-aided, degraded and dead-reckoning modes.
 - **Doppler speed labels** — the fix's speed field, with its accuracy estimate, is the label used for
   online recalibration of the speed model.
+
+### Interference detection
+
+The statement mentions jamming. The claim is **detection and safe degradation**, not anti-jamming. Four
+tests, all cheap:
+
+- **Simultaneous C/N₀ collapse across all constellations** — distinguishes interference from the gradual,
+  partial loss caused by structural blockage. Automatic gain control readings from the GNSS measurements
+  API strengthen this considerably, but AGC exposure varies by device and must be checked on the target
+  phones rather than assumed.
+- **Innovation gating** — a fix inconsistent with inertial motion beyond the filter's gate is rejected.
+  Covers spoofing and severe multipath with one mechanism.
+- **Kinematic plausibility** — a position step larger than the vehicle could physically have travelled.
+- **Constellation cross-check** — GPS-only and NavIC-inclusive solutions disagreeing beyond their stated
+  accuracies.
+
+On detection, drop to dead reckoning and say so in the interface.
 
 ### Mode determination
 

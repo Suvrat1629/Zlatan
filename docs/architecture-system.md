@@ -34,8 +34,9 @@ against this document; NavIC and the parity gates were adopted from it.
 14. Workstreams, critical path and gates
 15. Assumptions, spikes and open questions
 16. Decisions register
-17. Team repo alignment
-18. Glossary
+17. Requirements coverage and gap closures
+18. Team repo alignment
+19. Glossary
 
 ---
 
@@ -269,11 +270,20 @@ Rates are deliberate: attitude propagates fast because gyro integration needs it
 - **Forward displacement increment plus its variance**, from a window of calibrated IMU data. The
   primary output and the reason the system works at all — no closed-form physics maps phone vibration
   and chassis kinematics to road speed, so it must be learned.
-- **Motion context classification** — stationary, idling, cruising, turning, shock. Cheap, and it gates
-  ZUPT and lets the filter discard corrupted windows. Directly satisfies the "filter out non-navigation
-  motions" requirement.
-- Optionally a small residual correction on gyro bias. Add only if the EKF's own bias estimation proves
-  insufficient — never speculatively.
+- **Motion context classification** — stationary, idling, cruising, accelerating, braking, turning, shock.
+  Cheap, and it gates ZUPT and drives how the filter handles corrupted windows. Directly satisfies the
+  "filter out non-navigation motions" requirement.
+- **Gyroscope correction** — scale factor, axis misalignment and temperature-dependent bias that a
+  random-walk bias state cannot represent.
+- **GNSS quality model** — predicts each fix's position-error scale, becoming the GNSS measurement noise
+  and driving the degraded mode.
+- **Process-noise adaptation** from the motion context class.
+
+Together these mean the learned models supply the filter's measurement **and both of its noise models**,
+while the estimator stays a principled recursive filter. That is what makes the fusion genuinely AI-based
+without surrendering the uncertainty accounting. A learned residual on the filter's *output* is
+deliberately rejected — it would place an unconstrained term outside the covariance accounting, masking
+divergence and making the reported uncertainty untrue. Detail in section 17.
 
 **Deterministic:**
 - Integration, state propagation and all EKF mathematics.
@@ -1155,7 +1165,174 @@ configuration rather than constants. Followed, the edge engine is packaging; not
 
 ---
 
-## 17. Team repo alignment
+## 17. Requirements coverage and gap closures
+
+Full detail, including labelling strategies and stated limitations, is in
+`wiki/notes/idr-requirements-coverage.md`. Summarised here.
+
+**Nothing is built except the team's baseline speed model.** What follows is design coverage, not
+delivered capability. Each closure states the evidence it depends on; preconditions that cannot be
+confirmed from the desk are listed at the end rather than assumed.
+
+### Gap 1 — non-navigation motion filtering
+
+Four mechanisms for four distinct problems. **Shock detection is deterministic:** band-pass the vertical
+linear acceleration and declare a shock on a large excursion whose *duration* is short — the duration
+constraint is what separates a pothole from genuine braking. This requires enough samples to see the
+transient's shape, so it is conditional on decision 1; at 10 Hz a pothole is one or two samples and is not
+separable by any method.
+
+**Detected shocks never cause sample deletion** — a discarded sample is a hole in an integral. Instead
+inflate that window's measurement noise and suspend ZUPT and NHC while the shock is active.
+
+**Idling and stationary detection** from accelerometer and gyroscope variance drives ZUPT, with thresholds
+fitted against recorded idling and slow-crawl data rather than guessed — a false ZUPT during a crawl
+produces systematic distance loss.
+
+**A motion context classifier** is the learned part. Labels are derived weakly from GNSS speed and its
+derivative, gyro yaw rate, and the deterministic shock detector. The classifier learns to reproduce those
+labels from IMU alone, which is what makes it useful when GNSS is gone — but it is weak supervision and
+inherits any bias in the labelling rules, which should be stated rather than presented as ground truth.
+
+**Mount shift detection** tracks gravity direction in the estimated vehicle frame; a step change with no
+corresponding manoeuvre in gyro and horizontal acceleration means the phone moved. Re-align, inflate
+attitude covariance, mark heading unreliable until re-converged. A shift occurring exactly during a
+manoeuvre is not separable — the consequence is a missed detection, with innovation monitoring as the
+second line of defence.
+
+### Gap 2 — making the fusion genuinely AI-based
+
+Three learned components sit inside the fusion loop.
+
+**Variance head** on the speed model, trained by Gaussian negative log-likelihood, needing no labels
+beyond those the speed model already uses; its output becomes the measurement noise.
+
+**Learned GNSS quality model** taking C/N₀ distribution, satellite count, constellation mix, dilution of
+precision and recent innovation history, and predicting that fix's position-error scale. **This cannot be
+trained on IO-VNBD**, whose ground truth is itself GPS-derived — learning GNSS error needs a reference
+better than the GNSS being evaluated. A dataset such as the Google Smartphone Decimeter Challenge data is
+the candidate, and its ground-truth quality and licence must be verified before planning around it. If
+that fails, fall back to the deterministic gate already in the design and drop the claim rather than
+fabricate it.
+
+**Process-noise adaptation** selecting a fitted noise profile from the motion context class.
+
+**Rejected: a learned residual on the filter output.** Easy to add, easy to demo, and it places an
+unconstrained learned term outside the covariance accounting — masking divergence and making the
+uncertainty estimate a lie.
+
+Describe the result as **AI-augmented Bayesian fusion**: learned models supply the measurement and both
+noise models; the estimator stays a principled recursive filter, which is what keeps the uncertainty
+meaningful and the edge deployment tractable. Argue it as a deliberate choice, not a limitation.
+
+### Gap 3 — AI-based IMU noise and bias correction
+
+Split the problem. **The stochastic model is not learned:** Allan variance on a long stationary recording
+gives angle random walk, bias instability and rate random walk for that specific device, which become the
+filter's process-noise parameters. Measured per device, far better than guessed, and cheap.
+
+**The deterministic residual is learned:** a small dilated convolutional network correcting gyroscope
+scale factor, axis misalignment, g-sensitivity and temperature-dependent bias — structure a random-walk
+bias state cannot represent. Learned gyroscope denoising with dilated convolutions is established in the
+inertial navigation literature; read the source work rather than reconstructing it from this summary.
+
+Training needs an attitude reference. **Whether IO-VNBD provides one is unverified** — check before
+committing. The workable fallback is yaw only, using GNSS course-over-ground during good-GNSS driving as a
+weak reference, which is acceptable because yaw dominates our error budget.
+
+Sequence the Allan variance work first: a correctly parameterised filter may already estimate bias well
+enough to make the learned correction unnecessary, and that is worth knowing before building it.
+
+### Gap 4 — the magnetometer
+
+Named as a live input in the statement, and close to useless inside a steel body. Both are true, so
+**ingest it, use it narrowly, and prove the de-weighting with measurements.**
+
+Calibrate hard and soft iron by fitting an ellipsoid to field measurements over a drive. Detect
+disturbance deterministically by comparing measured field magnitude and the dip angle against an offline
+geomagnetic reference model — a field of the wrong strength or wrong inclination is disturbed and
+rejected. Use it only for initial yaw when stationary with no GNSS, and as a heavily de-weighted heading
+prior on long straights when the test passes.
+
+Present recorded in-vehicle disturbance statistics alongside the resulting weighting. That converts
+"we ignored a listed input" into "we ingested it, measured how often it is disturbed, and weighted it
+accordingly".
+
+### Gap 5 — multi-level parking
+
+**Floor detection** from *relative* pressure change over minutes, never absolute altitude, which drifts
+with weather. Corroborated by integrated yaw during ramp transit, since parking ramps produce a
+characteristic sustained turn rate; the two together are far more robust than either alone. Verify the
+barometer resolution on the actual test phones and measure the real inter-floor height rather than
+assuming a standard value.
+
+**Horizontally**, no road network exists: the matcher returns no candidates, the filter continues on
+inertial data with NHC and ZUPT, and uncertainty grows visibly. This is the *same code path* as driving
+off the edge of a downloaded map region, which is a good reason to build and test it early.
+
+The claim is continuous position with honestly growing uncertainty plus correct floor identification —
+not lane-level accuracy.
+
+### Gap 6 — the screening deliverable
+
+The statement requires position plots from an IO-VNBD subset; metric tables do not satisfy it. Four plots:
+**trajectory overlay** per held-out drive with outage segments shaded; **drift versus outage duration** at
+10, 30, 60 and 180 seconds against both baselines; **along-track and cross-track decomposition** over an
+outage; and a **cumulative distribution of drift percentage** across all segments with the 10% target
+drawn in. The first is what a reviewer looks at; the second and fourth are what make it credible.
+
+### Gap 7 — "lane-level" versus the 10% benchmark
+
+These conflict — 10% of 1 km is 100 m. Decompose rather than choose: **cross-track** error is constrained
+by map matching to well inside a lane width once a confident match exists, which is where the lane-level
+claim is honest; **along-track** error is what the 10% budget covers and is dominated by speed-model bias,
+which map matching barely touches in a straight tunnel. Report both separately everywhere so the claim is
+evidenced.
+
+### Gap 8 — jamming and interference
+
+We claim **detection and safe degradation**, not anti-jamming. Four tests: simultaneous C/N₀ collapse
+across all constellations, which distinguishes interference from the gradual partial loss of structural
+blockage (automatic gain control readings strengthen this considerably where exposed — availability varies
+by device and must be checked); innovation gating, which covers spoofing and severe multipath with the
+same mechanism; kinematic plausibility against maximum feasible vehicle motion; and a constellation
+cross-check between GPS-only and NavIC-inclusive solutions. On detection, drop to dead reckoning and say
+so in the interface.
+
+### Gap 9 — two-wheelers
+
+A two-wheeler banks into turns, so measured specific force stays roughly aligned with the machine's own
+vertical axis and the gravity-based tilt estimate reads the lean as a change in mounting orientation.
+Uncorrected, every turn corrupts alignment.
+
+**Correction:** in a steady coordinated turn the lean angle relates forward speed, yaw rate and gravity, so
+with speed from the model and yaw rate from the gyroscope the expected lean can be predicted and separated
+from the constant mounting rotation. **Stated plainly, that relation holds only in steady coordinated
+turns** — turn entry and exit, counter-steering and mid-corner braking violate it, so the correction is
+gated on approximately constant yaw rate and treated as unavailable otherwise.
+
+Vibration characteristics also differ substantially from a car, so a car-trained speed model should not be
+assumed to transfer; this needs separate data or a vehicle-type head.
+
+**Decide:** commit, with the lean correction, vehicle-type detection and separate training data; or scope
+two-wheelers out explicitly. Both defensible. Silently building for cars while the statement names
+two-wheelers is not.
+
+### Preconditions that must be verified, not assumed
+
+1. Whether IO-VNBD provides any attitude or heading reference (Gap 3).
+2. Ground-truth quality and licence of any dataset used to learn GNSS error (Gap 2).
+3. Barometer resolution on the test phones and the real inter-floor height of the test structure (Gap 5).
+4. Automatic gain control availability through the GNSS measurements API on target phones (Gap 8).
+5. Achievable IMU sample rate per test phone, since Gaps 1 and 3 both depend on it (decision 1).
+6. Whether an Allan-variance-parameterised filter already estimates bias well enough to make the learned
+   gyroscope correction unnecessary (Gap 3).
+
+Each is a short experiment. None should be assumed.
+
+---
+
+## 18. Team repo alignment
 
 Review of `sih-26168-notes` (problem ID SIH26168, team of five) against this document, 2026-08-29.
 
@@ -1213,7 +1390,7 @@ layer are outstanding.
 
 ---
 
-## 18. Glossary
+## 19. Glossary
 
 **Sensors.** *GNSS* — the general name for satellite positioning; GPS, Galileo and NavIC are all GNSS.
 *IMU* — the motion-sensing chip containing an accelerometer and gyroscope. *Accelerometer* — measures
