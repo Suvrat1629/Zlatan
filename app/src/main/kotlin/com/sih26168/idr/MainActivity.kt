@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.TextView
@@ -19,6 +20,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updateLayoutParams
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -39,6 +44,7 @@ class MainActivity : AppCompatActivity() {
     private var bound = false
     private lateinit var mapRenderer: MapRenderer
     private lateinit var modeBadge: TextView
+    private lateinit var modeBadgeCard: com.google.android.material.card.MaterialCardView
     private lateinit var speedText: TextView
     private lateinit var driftText: TextView
     private lateinit var muteToggle: Button
@@ -81,14 +87,17 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_main)
 
         mapRenderer = OsmdroidMapRenderer(this)
         mapRenderer.attach(findViewById(R.id.map_container))
 
         modeBadge = findViewById(R.id.mode_badge)
+        modeBadgeCard = findViewById(R.id.mode_badge_card)
         speedText = findViewById(R.id.speed_text)
         driftText = findViewById(R.id.drift_text)
+        applyWindowInsets()
         muteToggle = findViewById(R.id.mute_toggle)
         recordButton = findViewById(R.id.record_button)
         compareToggle = findViewById(R.id.compare_toggle)
@@ -187,6 +196,8 @@ class MainActivity : AppCompatActivity() {
                             append(" sats")
                             if (s.irnssSatsInFix > 0) append(" (NavIC ${s.irnssSatsInFix})")
                         }
+                        modeBadgeCard.strokeColor =
+                            ContextCompat.getColor(this@MainActivity, modeAccentColor(s.mode))
                         speedText.text = getString(R.string.speed_format, s.speedMps * 3.6f)
                         service?.updateNotification(s.mode)
                     }
@@ -234,6 +245,43 @@ class MainActivity : AppCompatActivity() {
         Mode.GNSS -> getString(R.string.mode_gnss)
         Mode.DEGRADED -> getString(R.string.mode_degraded)
         Mode.DEAD_RECKONING -> getString(R.string.mode_dead_reckoning)
+    }
+
+    /** Mode palette (semantic, stable across day/night) — see idr-android-ui §4. */
+    private fun modeAccentColor(mode: Mode): Int = when (mode) {
+        Mode.INIT -> R.color.idr_mode_init
+        Mode.GNSS -> R.color.idr_mode_gnss
+        Mode.NAVIC -> R.color.idr_navic
+        Mode.DEGRADED, Mode.DEAD_RECKONING -> R.color.idr_dead_reckoning
+    }
+
+    /**
+     * Edge-to-edge: the map draws full-bleed under the system bars; only the
+     * chrome is inset. No android:fitsSystemWindows in XML — see idr-android-ui §7.
+     */
+    private fun applyWindowInsets() {
+        val baseMargin = resources.getDimensionPixelSize(R.dimen.spacing_medium)
+        val modeCard = findViewById<View>(R.id.mode_badge_card)
+        val speedCard = findViewById<View>(R.id.speed_card)
+        val actionBarContent = findViewById<View>(R.id.action_bar_content)
+        val basePadV = resources.getDimensionPixelSize(R.dimen.spacing_small)
+
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.root)) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            modeCard.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                topMargin = baseMargin + bars.top
+            }
+            speedCard.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                topMargin = baseMargin + bars.top
+            }
+            actionBarContent.setPadding(
+                actionBarContent.paddingLeft,
+                basePadV,
+                actionBarContent.paddingRight,
+                basePadV + bars.bottom,
+            )
+            insets
+        }
     }
 
     override fun onResume() {

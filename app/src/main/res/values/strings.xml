@@ -11,6 +11,7 @@
     <string name="record_trip">Record trip</string>
     <string name="stop_recording">Stop recording</string>
     <string name="speed_format">%.0f km/h</string>
+    <string name="speed_placeholder">0 km/h</string>
     <string name="recenter">Recenter on my location</string>
     <string name="compare_toggle">Compare view</string>
     <string name="drift_format">Drift: ~%.1f%% (%.0fm since GPS lost)</string>
