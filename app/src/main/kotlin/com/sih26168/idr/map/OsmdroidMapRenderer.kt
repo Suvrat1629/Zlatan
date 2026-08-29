@@ -1,6 +1,7 @@
 package com.sih26168.idr.map
 
 import android.content.Context
+import android.graphics.DashPathEffect
 import android.view.MotionEvent
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -21,16 +22,21 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
         Configuration.getInstance().osmdroidBasePath = context.getExternalFilesDir(null) ?: context.filesDir
     }
 
+    private val density = context.resources.displayMetrics.density
+    private fun dp(value: Float): Float = value * density
+
     private val mapView = MapView(context).apply {
         setTileSource(TileSourceFactory.MAPNIK)
         setMultiTouchControls(true)
         controller.setZoom(17.0)
     }
 
+    // Non-deprecated osmdroid API: fillPaint / outlinePaint instead of the
+    // fillColor / strokeColor / strokeWidth setters.
     private val uncertaintyCircle = Polygon(mapView).apply {
-        fillColor = 0x334285F4
-        strokeColor = 0x664285F4
-        strokeWidth = 2f
+        fillPaint.color = UNCERTAINTY_FILL_GNSS
+        outlinePaint.color = UNCERTAINTY_STROKE_GNSS
+        outlinePaint.strokeWidth = dp(1.5f)
     }
 
     private val vehicleMarker = Marker(mapView).apply {
@@ -41,9 +47,10 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
 
     private val trailSegments = mutableListOf<Polyline>()
     private var currentSegmentIsGnss: Boolean? = null
+    private var lastMode: Mode = Mode.INIT
 
     private val plainGpsTrail = Polyline(mapView).apply {
-        outlinePaint.strokeWidth = 8f
+        outlinePaint.strokeWidth = dp(2.5f)
         outlinePaint.color = 0xFF9E9E9E.toInt()
         isEnabled = false
     }
@@ -81,16 +88,29 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
         } else {
             emptyList()
         }
+        // Circle colour reinforces the mode: blue with a fix, amber when
+        // degraded / dead-reckoning (paired with the dashed trail, not hue alone).
+        val degraded = lastMode == Mode.DEGRADED || lastMode == Mode.DEAD_RECKONING
+        uncertaintyCircle.fillPaint.color =
+            if (degraded) UNCERTAINTY_FILL_DR else UNCERTAINTY_FILL_GNSS
+        uncertaintyCircle.outlinePaint.color =
+            if (degraded) UNCERTAINTY_STROKE_DR else UNCERTAINTY_STROKE_GNSS
         if (followEnabled) mapView.controller.animateTo(point)
         mapView.invalidate()
     }
 
     override fun appendTrailPoint(lat: Double, lon: Double, mode: Mode) {
+        lastMode = mode
         val isGnss = isGnssFamily(mode)
         if (currentSegmentIsGnss != isGnss) {
             val segment = Polyline(mapView).apply {
-                outlinePaint.strokeWidth = 10f
+                outlinePaint.strokeWidth = dp(4f)
                 outlinePaint.color = if (isGnss) GNSS_TRAIL_COLOR else DEAD_RECKONING_TRAIL_COLOR
+                // Dead-reckoning segments are dashed as well as amber, so the
+                // "no fix here" stretch reads without relying on colour.
+                if (!isGnss) {
+                    outlinePaint.pathEffect = DashPathEffect(floatArrayOf(dp(10f), dp(7f)), 0f)
+                }
             }
             trailSegments += segment
             mapView.overlays.add(0, segment)
@@ -114,7 +134,12 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
     }
 
     companion object {
-        private const val GNSS_TRAIL_COLOR = 0xFF1565C0.toInt()
-        private const val DEAD_RECKONING_TRAIL_COLOR = 0xFFFF8F00.toInt()
+        private val GNSS_TRAIL_COLOR = 0xFF1565C0.toInt()
+        private val DEAD_RECKONING_TRAIL_COLOR = 0xFFFF8F00.toInt()
+
+        private val UNCERTAINTY_FILL_GNSS = 0x331565C0
+        private val UNCERTAINTY_STROKE_GNSS = 0x661565C0
+        private val UNCERTAINTY_FILL_DR = 0x33FF8F00
+        private val UNCERTAINTY_STROKE_DR = 0x66FF8F00
     }
 }

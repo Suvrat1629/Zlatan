@@ -1,12 +1,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
 
-    <!--
-      Material 3 (Material You) base theme. Migrated from Theme.MaterialComponents
-      (M2) so the M3 component styles and ?attr/colorSurfaceContainer* /
-      ?attr/textAppearance* tokens resolve — see .claude/skills/idr-android-ui §3.
-      Surface / outline / error roles are inherited from Theme.Material3.DayNight
-      (correct in both light and dark); only the brand colours are overridden.
-    -->
+    <!-- Dark variant: only status-bar icon polarity differs; M3 surface/outline
+         roles are inherited from Theme.Material3.DayNight's night values. -->
     <style name="Theme.IDR" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/idr_primary</item>
         <item name="colorOnPrimary">@color/idr_on_primary</item>
@@ -14,15 +9,11 @@
         <item name="colorSecondary">@color/idr_navic</item>
         <item name="colorOnSecondary">@color/idr_on_primary</item>
 
-        <!-- Edge-to-edge: bars are transparent, MainActivity insets the chrome. -->
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightStatusBar">false</item>
         <item name="android:enforceStatusBarContrast" tools:targetApi="q">false</item>
         <item name="android:enforceNavigationBarContrast" tools:targetApi="q">false</item>
-
-        <!-- No hardcoded windowBackground: Theme.Material3.DayNight supplies a
-             day/night-correct one. A fixed white here flashed on dark-mode launch. -->
     </style>
 
 </resources>

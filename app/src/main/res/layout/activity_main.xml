@@ -2,9 +2,13 @@
 <androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <!-- Full-bleed map: intentionally draws under the system bars. Only the
+         chrome below is inset (MainActivity applies window insets). -->
     <FrameLayout
         android:id="@+id/map_container"
         android:layout_width="0dp"
@@ -14,135 +18,239 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <TextView
-        android:id="@+id/mode_badge"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_margin="16dp"
-        android:background="@drawable/badge_background"
-        android:padding="10dp"
-        android:textColor="#FFFFFF"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:text="@string/mode_init"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
+    <!-- ===================== HUD chips (over the map) =====================
+         These keep a fixed high-contrast scrim + white text on purpose:
+         ?attr/colorSurface would vanish over a matching map tile.
+         See .claude/skills/idr-android-ui §5. -->
 
-    <TextView
-        android:id="@+id/drift_text"
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/mode_badge_card"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="16dp"
-        android:layout_marginTop="8dp"
-        android:background="@drawable/badge_background"
-        android:padding="10dp"
-        android:textColor="#FFFFFF"
-        android:textSize="12sp"
+        android:layout_margin="@dimen/spacing_medium"
+        app:cardBackgroundColor="@color/hud_scrim"
+        app:cardCornerRadius="@dimen/hud_corner_radius"
+        app:cardElevation="@dimen/hud_elevation"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/speed_card"
+        app:layout_constraintHorizontal_bias="0"
+        app:layout_constraintWidth_max="wrap">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:baselineAligned="false">
+
+            <!-- Accent bar: colour set per Mode in MainActivity -->
+            <View
+                android:id="@+id/mode_accent"
+                android:layout_width="5dp"
+                android:layout_height="match_parent"
+                android:minHeight="40dp"
+                android:background="@color/idr_mode_init" />
+
+            <TextView
+                android:id="@+id/mode_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:paddingStart="@dimen/hud_padding_h"
+                android:paddingEnd="@dimen/hud_padding_h"
+                android:paddingTop="@dimen/hud_padding_v"
+                android:paddingBottom="@dimen/hud_padding_v"
+                android:textColor="@color/hud_on_scrim"
+                android:textAppearance="?attr/textAppearanceTitleMedium"
+                android:textStyle="bold"
+                android:text="@string/mode_init"
+                tools:text="GPS lost — still tracking you  0 sats" />
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/drift_card"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/spacing_medium"
+        android:layout_marginTop="@dimen/spacing_small"
         android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@id/mode_badge"
-        app:layout_constraintStart_toStartOf="parent" />
+        app:cardBackgroundColor="@color/hud_scrim"
+        app:cardCornerRadius="@dimen/hud_corner_radius"
+        app:cardElevation="@dimen/hud_elevation"
+        app:layout_constraintTop_toBottomOf="@id/mode_badge_card"
+        app:layout_constraintStart_toStartOf="parent"
+        tools:visibility="visible">
 
-    <TextView
-        android:id="@+id/speed_text"
+        <TextView
+            android:id="@+id/drift_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="@dimen/hud_padding_h"
+            android:paddingEnd="@dimen/hud_padding_h"
+            android:paddingTop="@dimen/hud_padding_v"
+            android:paddingBottom="@dimen/hud_padding_v"
+            android:textColor="@color/hud_on_scrim_variant"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            tools:text="Drift: ~0.0% (374m since GPS lost)" />
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/speed_card"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_margin="16dp"
-        android:background="@drawable/badge_background"
-        android:padding="10dp"
-        android:textColor="#FFFFFF"
-        android:textSize="20sp"
-        android:textStyle="bold"
-        android:text="0 km/h"
+        android:layout_margin="@dimen/spacing_medium"
+        app:cardBackgroundColor="@color/hud_scrim"
+        app:cardCornerRadius="@dimen/hud_corner_radius"
+        app:cardElevation="@dimen/hud_elevation"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent">
 
-    <ImageButton
+        <TextView
+            android:id="@+id/speed_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="96dp"
+            android:gravity="center"
+            android:paddingStart="@dimen/hud_padding_h"
+            android:paddingEnd="@dimen/hud_padding_h"
+            android:paddingTop="@dimen/hud_padding_v"
+            android:paddingBottom="@dimen/hud_padding_v"
+            android:textColor="@color/hud_on_scrim"
+            android:textAppearance="?attr/textAppearanceHeadlineMedium"
+            android:textStyle="bold"
+            android:text="@string/speed_placeholder"
+            tools:text="42 km/h" />
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/recenter_button"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="88dp"
-        android:background="@drawable/badge_background"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="@dimen/spacing_medium"
+        android:layout_marginBottom="@dimen/spacing_medium"
         android:contentDescription="@string/recenter"
-        android:padding="10dp"
-        android:src="@android:drawable/ic_menu_mylocation"
-        app:tint="#FFFFFF"
-        app:layout_constraintBottom_toBottomOf="parent"
+        android:src="@drawable/ic_my_location"
+        app:fabSize="mini"
+        app:tint="?attr/colorOnSurface"
+        app:backgroundTint="?attr/colorSurface"
+        app:layout_constraintBottom_toTopOf="@id/action_bar"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <LinearLayout
+    <!-- ===================== Bottom action bar ===================== -->
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/action_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="16dp"
-        android:gravity="center"
+        app:cardBackgroundColor="?attr/colorSurface"
+        app:cardCornerRadius="0dp"
+        app:cardElevation="6dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <Button
-            android:id="@+id/mute_toggle"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:id="@+id/action_bar_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="4dp"
-            android:textSize="11sp"
-            android:text="@string/gnss_mute_toggle" />
+            android:orientation="horizontal"
+            android:baselineAligned="false"
+            android:paddingStart="@dimen/spacing_small"
+            android:paddingEnd="@dimen/spacing_small"
+            android:paddingTop="@dimen/spacing_small"
+            android:paddingBottom="@dimen/spacing_small">
 
-        <Button
-            android:id="@+id/compare_toggle"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="4dp"
-            android:layout_marginEnd="4dp"
-            android:textSize="11sp"
-            android:text="@string/compare_toggle" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/mute_toggle"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:minHeight="@dimen/touch_target_min"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="@string/gnss_mute_toggle"
+                app:icon="@drawable/ic_gnss_loss"
+                app:iconGravity="top"
+                app:iconSize="20dp" />
 
-        <Button
-            android:id="@+id/record_button"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="4dp"
-            android:textSize="11sp"
-            android:text="@string/record_trip" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/compare_toggle"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp"
+                android:minHeight="@dimen/touch_target_min"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="@string/compare_toggle"
+                app:icon="@drawable/ic_compare"
+                app:iconGravity="top"
+                app:iconSize="20dp" />
 
-    </LinearLayout>
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/record_button"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:minHeight="@dimen/touch_target_min"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="@string/record_trip"
+                app:icon="@drawable/ic_record"
+                app:iconGravity="top"
+                app:iconSize="20dp" />
 
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- ===================== Pre-engine permission gate =====================
+         Not over live map imagery in practice — uses real M3 tokens. -->
     <FrameLayout
         android:id="@+id/permission_overlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#CC000000"
+        android:background="?attr/colorSurface"
         android:visibility="gone"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintEnd_toEndOf="parent"
+        tools:visibility="visible">
 
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:orientation="vertical"
-            android:background="@drawable/badge_background"
-            android:padding="24dp">
+            android:gravity="center_horizontal"
+            android:padding="@dimen/spacing_large">
 
             <TextView
                 android:id="@+id/permission_message"
-                android:layout_width="240dp"
+                android:layout_width="280dp"
                 android:layout_height="wrap_content"
-                android:textColor="#FFFFFF"
-                android:textSize="14sp"
+                android:textColor="?attr/colorOnSurface"
+                android:textAppearance="?attr/textAppearanceBodyLarge"
                 android:text="@string/permission_rationale" />
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/grant_permission_button"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="@dimen/spacing_large"
+                android:minHeight="@dimen/touch_target_min"
                 android:text="@string/grant_permission" />
 
         </LinearLayout>

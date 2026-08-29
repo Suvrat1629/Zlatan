@@ -1,9 +1,32 @@
 <resources>
+    <!-- Brand -->
     <color name="idr_primary">#1565C0</color>
     <color name="idr_primary_dark">#0D47A1</color>
+    <color name="idr_on_primary">#FFFFFF</color>
     <color name="idr_accent">#FF6F00</color>
-    <color name="idr_dead_reckoning">#FF8F00</color>
-    <color name="idr_navic">#2E7D32</color>
-    <color name="idr_background">#FFFFFF</color>
+
+    <!--
+      Mode palette. These are semantic (they mean a positioning state), NOT theme
+      roles — they must stay identical in light and dark so a glance reads the
+      same day or night. Paired with a shape/icon difference in the UI, never
+      hue alone (colour blindness) — see .claude/skills/idr-android-ui §1, §4.
+    -->
+    <color name="idr_mode_init">#9E9E9E</color>        <!-- INIT: neutral grey -->
+    <color name="idr_mode_gnss">#1565C0</color>        <!-- GNSS: blue -->
+    <color name="idr_navic">#2E7D32</color>            <!-- NAVIC: green -->
+    <color name="idr_dead_reckoning">#FF8F00</color>   <!-- DEGRADED / DEAD_RECKONING: amber -->
+
+    <color name="idr_recording">#D32F2F</color>       <!-- record button active -->
+
+    <!--
+      HUD scrim: the deliberate exception to "no hardcoded colours in layouts".
+      The mode / speed / drift chips sit on top of arbitrary map imagery, so
+      ?attr/colorSurface would be invisible over a matching tile. Fixed
+      high-contrast dark translucent + white text instead — see skill §5.
+    -->
+    <color name="hud_scrim">#CC1C1B1F</color>
+    <color name="hud_on_scrim">#FFFFFFFF</color>
+    <color name="hud_on_scrim_variant">#C7FFFFFF</color>
+
     <color name="ic_launcher_background">#1565C0</color>
 </resources>
