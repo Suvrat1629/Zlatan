@@ -49,6 +49,9 @@ class RealEngine(
     override val state: StateFlow<PositionState> = _state.asStateFlow()
 
     @Volatile private var lastGyroZ = 0f
+    private var tickCount = 0
+    private val LOG_EVERY_N_TICKS = 5   // ~2 logs/sec at 10 Hz
+    @Volatile private var smoothedSpeed = 0f
     private val pendingGnssFix = AtomicReference<GnssFixRecord?>(null)
     private val lastKnownGnssSpeedMps = AtomicReference(0f)
 
@@ -140,11 +143,40 @@ class RealEngine(
 
         val features = FeatureExtractor.featureWindow(rawWindow)
         val normalized = normalizer.apply(features)
-        val speedMps = speedEstimator.estimate(normalized).coerceIn(config.speedMinMps, config.speedMaxMps)
+        // ZUPT: a stationary phone still yields a non-zero model speed; clamp it to 0 so the
+        // dot doesn't drift forever while parked / indoors (no GNSS to correct it).
+        val stationary = ZeroVelocityDetector.isStationary(
+            features, config.zuptAccelThresholdMps2, config.zuptGyroThresholdRps,
+        )
+        val rawModelSpeed = speedEstimator.estimate(normalized)
+        val instantSpeed = if (stationary) {
+            0f
+        } else {
+            rawModelSpeed.coerceIn(config.speedMinMps, config.speedMaxMps)
+        }
+        // Exponential smoothing tames the model's spiky output (a single jumpy estimate would
+        // otherwise lurch the dot). Decays toward 0 on its own when ZUPT holds instantSpeed at 0.
+        val a = config.speedSmoothingAlpha
+        smoothedSpeed = a * instantSpeed + (1f - a) * smoothedSpeed
+        val speedMps = smoothedSpeed
 
         val dtSeconds = 1.0 / config.outputRateHz
         headingEstimator.predict(lastGyroZ, dtSeconds)
         val headingDeg = headingEstimator.headingDeg()
+
+        // Real-time diagnostics — view with:  adb logcat -s System.out | grep IDR-TICK
+        if (tickCount++ % LOG_EVERY_N_TICKS == 0) {
+            var aLin = 0f; var gyroMag = 0f
+            for (row in features) { aLin += row[2]; gyroMag += row[6] }
+            aLin /= features.size; gyroMag /= features.size
+            System.out.println(
+                "IDR-TICK mode=${modeArbiter.currentMode(tEndNanos)} " +
+                    "aLinMag=${"%.3f".format(aLin)} gyroMag=${"%.4f".format(gyroMag)} " +
+                    "stationary=$stationary modelSpeed=${"%.2f".format(rawModelSpeed)} " +
+                    "published=${"%.2f".format(speedMps)}m/s (${"%.1f".format(speedMps * 3.6f)}km/h) " +
+                    "hdg=${"%.0f".format(headingDeg)} sats=${modeArbiter.satsInFix()} navic=${modeArbiter.irnssSatsInFix()}"
+            )
+        }
 
         val deadReckoned = deadReckoner.step(speedMps, headingDeg, dtSeconds)
         fusionFilter.predict(deadReckoned, speedMps, headingDeg, dtSeconds)
