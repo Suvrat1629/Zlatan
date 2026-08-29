@@ -36,17 +36,19 @@ class RealEngine(
     ringBufferCapacitySamples: Int = 4000,
 ) : PositioningEngine {
 
-    // Optional full-rate CSV trace on the device (tilt/accel/speed/displacement per tick).
+    // Full-rate trace. Rows always stream to logcat tagged "IDR-CSV," (capture on the PC);
+    // if a traceCsv File is also given, the same rows are written on-device.
+    private val csvHeader =
+        "wallclock_ms,t_end_nanos,mode,pitch_deg,roll_deg,raw_acc_mps2,lin_acc_mps2," +
+            "gyro_mag_rps,stationary,model_speed_mps,published_speed_mps,heading_deg," +
+            "lat,lon,d_east_m,d_north_m,dist_from_origin_m,sats,navic"
     private val csvWriter: java.io.BufferedWriter? = traceCsv?.let { file ->
         file.parentFile?.mkdirs()
-        System.out.println("IDR-TRACE writing CSV to ${file.absolutePath}")
-        file.bufferedWriter().apply {
-            write("wallclock_ms,t_end_nanos,mode,pitch_deg,roll_deg,raw_acc_mps2,lin_acc_mps2," +
-                "gyro_mag_rps,stationary,model_speed_mps,published_speed_mps,heading_deg," +
-                "lat,lon,d_east_m,d_north_m,dist_from_origin_m,sats,navic")
-            newLine()
-            flush()
-        }
+        System.out.println("IDR-TRACE also writing CSV on device: ${file.absolutePath}")
+        file.bufferedWriter().apply { write(csvHeader); newLine(); flush() }
+    }.also {
+        // header for the PC-side capture
+        System.out.println("IDR-CSV,$csvHeader")
     }
 
     private val ringBuffer = RingBuffer(ringBufferCapacitySamples)
@@ -204,15 +206,14 @@ class RealEngine(
         val mode = modeArbiter.currentMode(tEndNanos)
         val sats = modeArbiter.satsInFix(); val navic = modeArbiter.irnssSatsInFix()
 
-        csvWriter?.apply {
-            write("${System.currentTimeMillis()},$tEndNanos,$mode," +
-                "${"%.2f".format(pitchDeg)},${"%.2f".format(rollDeg)}," +
-                "${"%.3f".format(rawAccMag)},${"%.3f".format(aLin)},${"%.4f".format(gyroMag)},$stationary," +
-                "${"%.3f".format(rawModelSpeed)},${"%.3f".format(speedMps)},${"%.1f".format(headingDeg)}," +
-                "${"%.7f".format(matched.lat)},${"%.7f".format(matched.lon)}," +
-                "${"%.1f".format(dEast)},${"%.1f".format(dNorth)},${"%.1f".format(distFromOrigin)},$sats,$navic")
-            newLine()
-        }
+        val csvRow = "${System.currentTimeMillis()},$tEndNanos,$mode," +
+            "${"%.2f".format(pitchDeg)},${"%.2f".format(rollDeg)}," +
+            "${"%.3f".format(rawAccMag)},${"%.3f".format(aLin)},${"%.4f".format(gyroMag)},$stationary," +
+            "${"%.3f".format(rawModelSpeed)},${"%.3f".format(speedMps)},${"%.1f".format(headingDeg)}," +
+            "${"%.7f".format(matched.lat)},${"%.7f".format(matched.lon)}," +
+            "${"%.1f".format(dEast)},${"%.1f".format(dNorth)},${"%.1f".format(distFromOrigin)},$sats,$navic"
+        System.out.println("IDR-CSV,$csvRow")   // captured into a CSV on the PC via logcat
+        csvWriter?.apply { write(csvRow); newLine() }
         if (tickCount++ % LOG_EVERY_N_TICKS == 0) {
             csvWriter?.flush()
             System.out.println(
