@@ -15,5 +15,7 @@ interface MapRenderer {
 
     fun appendTrailPoint(lat: Double, lon: Double, mode: Mode)
 
+    fun recenter()
+
     fun isGnssFamily(mode: Mode): Boolean = mode != Mode.DEAD_RECKONING && mode != Mode.INIT
 }

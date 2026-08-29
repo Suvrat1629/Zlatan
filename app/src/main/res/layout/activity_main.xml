@@ -44,6 +44,22 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Recenter — map panning/zooming stops auto-follow (see OsmdroidMapRenderer); this
+         is how the user gets back to being tracked. -->
+    <ImageButton
+        android:id="@+id/recenter_button"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="88dp"
+        android:background="@drawable/badge_background"
+        android:contentDescription="@string/recenter"
+        android:padding="10dp"
+        android:src="@android:drawable/ic_menu_mylocation"
+        app:tint="#FFFFFF"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <!-- Demo / proof controls (docs/05-App-Features.md "Demo / proof features") -->
     <LinearLayout
         android:layout_width="match_parent"

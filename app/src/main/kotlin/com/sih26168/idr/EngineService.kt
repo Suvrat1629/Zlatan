@@ -49,8 +49,10 @@ class EngineService : Service() {
     private fun lastKnownLocation(): LatLon? {
         val locationManager = getSystemService(LocationManager::class.java) ?: return null
         return try {
-            val location = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            location?.let { LatLon(it.latitude, it.longitude) }
+            val fromGps = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            val fromNetwork = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            val best = listOfNotNull(fromGps, fromNetwork).maxByOrNull { it.time }
+            best?.let { LatLon(it.latitude, it.longitude) }
         } catch (e: SecurityException) {
             null
         }

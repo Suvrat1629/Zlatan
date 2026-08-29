@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -79,6 +80,9 @@ class MainActivity : AppCompatActivity() {
         recordButton.setOnClickListener {
             val recording = service?.toggleRecording() ?: false
             recordButton.text = getString(if (recording) R.string.stop_recording else R.string.record_trip)
+        }
+        findViewById<ImageButton>(R.id.recenter_button).setOnClickListener {
+            mapRenderer.recenter()
         }
 
         requestNeededPermissionsThenStart()

@@ -11,4 +11,5 @@
     <string name="record_trip">Record trip</string>
     <string name="stop_recording">Stop recording</string>
     <string name="speed_format">%.0f km/h</string>
+    <string name="recenter">Recenter on my location</string>
 </resources>
