@@ -62,6 +62,17 @@ class RealEngine(
     private var blendLogCounter = 0
     @Volatile private var lastAnchorNanos = 0L
 
+    // Online delta-bias calibration (doc §14: "online recalibration against GNSS").
+    // Field logs showed the delta model carries a device/domain-specific positive bias
+    // (+0.5..1.8 m/s^2 on an S24 vs ~0 on the training set), inflating speed between
+    // fixes. While GNSS is trusted the true speed change per second is known, so we
+    // EMA-track (predicted dv - true dv) and subtract it everywhere.
+    private var dvBiasMps2 = 0f
+    private var dvSumSinceFix = 0f
+    private var dvCountSinceFix = 0
+    private var prevFixSpeedMps = Float.NaN
+    private var prevFixNanos = 0L
+
     @Volatile private var running = false
     private val periodMs = (1000.0 / config.outputRateHz).toLong()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { r ->
@@ -144,6 +155,21 @@ class RealEngine(
             // Blend anchor: a trusted fix re-anchors the propagated speed estimate.
             blendSpeedMps = fix.speedMps.coerceIn(config.speedMinMps, config.speedMaxMps)
             lastAnchorNanos = fix.tNanos
+
+            // Online dv-bias update: compare the delta model's average prediction over the
+            // inter-fix interval with the GNSS-observed speed change per second.
+            if (!prevFixSpeedMps.isNaN() && prevFixNanos != 0L && dvCountSinceFix > 0) {
+                val dtFix = (fix.tNanos - prevFixNanos) / 1e9f
+                if (dtFix in 0.2f..5f) {
+                    val trueDv = (fix.speedMps - prevFixSpeedMps) / dtFix
+                    val predDv = dvSumSinceFix / dvCountSinceFix
+                    dvBiasMps2 = 0.95f * dvBiasMps2 + 0.05f * (predDv - trueDv)
+                }
+            }
+            prevFixSpeedMps = fix.speedMps
+            prevFixNanos = fix.tNanos
+            dvSumSinceFix = 0f
+            dvCountSinceFix = 0
         }
 
         if (rawWindow == null) {
@@ -169,17 +195,20 @@ class RealEngine(
         // Old/no anchor -> the duration-stable absolute model takes over (lam -> 1),
         // which also keeps indoor/hand-held behaviour pinned near zero (v2 negatives).
         val speedMps = if (deltaEstimator != null && deltaNormalizer != null && lastAnchorNanos != 0L) {
-            val dvPerSecond = deltaEstimator.estimate(deltaNormalizer.apply(features))
+            val dvRaw = deltaEstimator.estimate(deltaNormalizer.apply(features))
+                .coerceIn(-4f, 4f)                    // physical sanity: > 0.4 g is not a car
+            dvSumSinceFix += dvRaw
+            dvCountSinceFix++
+            val dv = dvRaw - dvBiasMps2               // online bias correction (learned vs GNSS)
             val tSec = ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
             val lam = (tSec / (tSec + config.blendTauSeconds)).toFloat()
-            blendSpeedMps = ((1f - lam) * (blendSpeedMps + dvPerSecond * dtSeconds.toFloat()) + lam * vAbs)
+            blendSpeedMps = ((1f - lam) * (blendSpeedMps + dv * dtSeconds.toFloat()) + lam * vAbs)
                 .coerceIn(config.speedMinMps, config.speedMaxMps)
-            // Diagnostic (~every 2 s): field truth showed vAbs can misfire out-of-domain
-            // (real phone/road vs IO-VNBD training) — this line is how we catch it.
             if (blendLogCounter++ % 20 == 0) {
                 System.out.println(
-                    "IDR-BLEND vAbs=${"%.1f".format(vAbs * 3.6f)}km/h dv=${"%.2f".format(dvPerSecond)}m/s2 " +
-                        "lam=${"%.3f".format(lam)} t=${"%.0f".format(tSec)}s blend=${"%.1f".format(blendSpeedMps * 3.6f)}km/h"
+                    "IDR-BLEND vAbs=${"%.1f".format(vAbs * 3.6f)}km/h dvRaw=${"%.2f".format(dvRaw)} " +
+                        "bias=${"%.2f".format(dvBiasMps2)} lam=${"%.3f".format(lam)} " +
+                        "t=${"%.0f".format(tSec)}s blend=${"%.1f".format(blendSpeedMps * 3.6f)}km/h"
                 )
             }
             blendSpeedMps
