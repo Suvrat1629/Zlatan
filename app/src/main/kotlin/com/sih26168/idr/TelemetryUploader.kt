@@ -38,6 +38,10 @@ class TelemetryUploader : Closeable {
     private val deviceId = "${Build.MANUFACTURER}-${Build.MODEL}".replace(' ', '_')
     private val sessionId = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
 
+    private val ISO_UTC = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+        timeZone = java.util.TimeZone.getTimeZone("UTC")
+    }
+
     private val executor = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "telemetry-upload").apply { isDaemon = true }
     }
@@ -59,6 +63,9 @@ class TelemetryUploader : Closeable {
             queued++
         }
         queue.add(JSONObject().apply {
+            // Stamp at capture, not at insert: DB-default ts gave every row in a batch the
+            // same time, and rows are only individually placeable via boot-relative t_nanos.
+            put("ts", ISO_UTC.format(Date()))
             put("device_id", deviceId)
             put("session_id", sessionId)
             put("t_nanos", t.tNanos)
