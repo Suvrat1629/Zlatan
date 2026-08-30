@@ -35,6 +35,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".MagnetometerCalibrationActivity"
+            android:exported="false"
+            android:label="@string/calibration_title" />
+
         <!-- Single owner of engine lifetime (docs/architecture-android.md §8) — Activities
              bind and observe, never create engine state. -->
         <service
