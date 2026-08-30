@@ -12,12 +12,17 @@ import android.os.Build
 import android.os.IBinder
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import com.sih26168.idr.androidsensors.SensorSource
 import com.sih26168.idr.core.types.LatLon
-import com.sih26168.idr.core.types.VehicleMode
-import com.sih26168.idr.engine.RealEngine
 import com.sih26168.idr.core.types.Mode
 import com.sih26168.idr.core.types.PositioningEngine
-import com.sih26168.idr.androidsensors.SensorSource
+import com.sih26168.idr.core.types.VehicleMode
+import com.sih26168.idr.engine.RealEngine
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -36,6 +41,16 @@ class EngineService : Service() {
     private var sensorSource: SensorSource? = null
     private var gnssSource: GnssSource? = null
 
+    lateinit var telemetry: TelemetrySession
+        private set
+
+    /** Drives the once-a-second telemetry logcat line; cancelled in onDestroy. */
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Session context for the telemetry summary header. Set from the UI before recording. */
+    var currentVehicle: String = "unspecified"
+    var currentMount: String = "unspecified"
+
     var startupFailed: Boolean = false
         private set
 
@@ -45,8 +60,17 @@ class EngineService : Service() {
     override fun onCreate() {
         super.onCreate()
         val lastKnown = lastKnownLocation()
-        rawEngine = if (lastKnown != null) EngineFactory.create(this, lastKnown) else EngineFactory.create(this)
+        // Telemetry is created before the engine so the engine can be handed its diagnostics
+        // sink immediately. Diagnostics run from service start; only the CSV waits for Record.
+        telemetry = TelemetrySession(this, EngineFactory.modelVersion(this))
+        rawEngine = EngineFactory.create(
+            context = this,
+            startAt = lastKnown ?: LatLon(12.9716, 77.5946),
+        )
         recordingEngine = TripRecordingEngine(rawEngine)
+
+        (rawEngine as? RealEngine)?.setTelemetry(telemetry.diagnostics, null)
+
         createNotificationChannel()
         try {
             sensorSource = SensorSource(this, recordingEngine)
@@ -78,15 +102,25 @@ class EngineService : Service() {
         recordingEngine.start()
         sensorSource?.start()
         gnssSource?.start()
+        // One published position per engine tick; TelemetrySession throttles to one log line
+        // per second, so the engine itself stays platform-free.
+        serviceScope.launch {
+            recordingEngine.state.collect { telemetry.onPublished() }
+        }
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
+        serviceScope.cancel()
         sensorSource?.stop()
         gnssSource?.stop()
         recordingEngine.stopRecording()
+        (rawEngine as? RealEngine)?.setTelemetry(null, null)
+        // Write the summary even if Record was never stopped, so a killed session still
+        // leaves behind the numbers it measured.
+        telemetry.stopFileCapture()
         recordingEngine.stop()
         super.onDestroy()
     }
@@ -102,13 +136,28 @@ class EngineService : Service() {
     fun toggleRecording(): Boolean {
         if (recordingEngine.isRecording) {
             recordingEngine.stopRecording()
+            // Detach the CSV writer but keep diagnostics running: they are cheap, and a moment
+            // worth seeing should not be lost because nobody pressed Record.
+            (rawEngine as? RealEngine)?.setTelemetry(telemetry.diagnostics, null)
+            telemetry.stopFileCapture()
         } else {
             val dir = File(getExternalFilesDir(null), "traces").apply { mkdirs() }
             val name = "trip_${TRACE_TIMESTAMP_FORMAT.format(Date())}.csv"
             recordingEngine.startRecording(File(dir, name))
+            telemetry.startFileCapture(currentVehicle, currentMount)
+            (rawEngine as? RealEngine)?.setTelemetry(telemetry.diagnostics, telemetry.telemetryWriter)
         }
         return recordingEngine.isRecording
     }
+
+    /** One tap from the UI when something looks wrong, so the moment is findable in the log. */
+    fun mark(label: String, note: String = "") = telemetry.mark(label, note)
+
+    /** The one-line live readout for the debug overlay. */
+    fun telemetryLine(): String = telemetry.liveLine()
+
+    /** The pasteable session report. */
+    fun telemetrySummary(): String? = telemetry.summaryText()
 
     fun updateNotification(mode: Mode) {
         val manager = getSystemService(NotificationManager::class.java)

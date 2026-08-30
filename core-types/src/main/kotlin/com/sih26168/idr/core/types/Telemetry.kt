@@ -1,0 +1,98 @@
+package com.sih26168.idr.core.types
+
+/**
+ * One row per engine tick — the Tier 1 pipeline intermediates from the telemetry design.
+ *
+ * Everything here is derivable from the raw trace in principle, but recording it directly turns
+ * "the phone disagrees with the laptop" into a bisection rather than a mystery: it runs the parity
+ * check continuously on live data instead of once against a fixture.
+ */
+data class TelemetryTick(
+    val tNanos: Long,
+    /** Absolute-speed model output, before blending, m/s. */
+    val vModelMps: Float,
+    /** Delta-model acceleration output after bias correction, m/s^2. NaN when no delta model. */
+    val dvMps2: Float,
+    /** Speed actually published after blend, ZUPT and vehicle-mode damping, m/s. */
+    val vOutMps: Float,
+    /** Most recent trusted GNSS speed, m/s. NaN before the first fix. */
+    val vGnssMps: Float,
+    /** Blend weight on the absolute model: 0 = pure anchor+delta, 1 = pure absolute. */
+    val blendLambda: Float,
+    /** Yaw rate used for heading this tick, rad/s, sign in the heading convention. */
+    val yawRateRadS: Float,
+    val headingDeg: Float,
+    /** GNSS course at the last trusted fix, deg. NaN when unavailable. */
+    val gnssBearingDeg: Float,
+    /** Horizontal linear-acceleration magnitude from the feature window, m/s^2. */
+    val aHorizMps2: Float,
+    val stationary: Boolean,
+    val mode: Mode,
+    val satsInFix: Int,
+    val irnssSatsInFix: Int,
+    val lat: Double,
+    val lon: Double,
+    val uncertaintyM: Float,
+    /** Wall time spent inside the model call, milliseconds. */
+    val inferenceMs: Float,
+    /** Wall time for the whole engine tick, milliseconds. */
+    val tickMs: Float,
+)
+
+/** A moment the tester flagged, or an automatic event worth finding again in the log. */
+data class TelemetryMarker(
+    val tNanos: Long,
+    val label: String,
+    val note: String = "",
+)
+
+/** One GNSS-denied stretch, measured against truth at re-acquisition. */
+data class OutageRecord(
+    val startNanos: Long,
+    val endNanos: Long,
+    val durationSeconds: Double,
+    /** Distance the engine believes it travelled while denied, metres. */
+    val deadReckonedDistanceM: Double,
+    /** Straight-line error between the engine's position and the first trusted fix, metres. */
+    val errorM: Double,
+) {
+    val driftPercent: Double
+        get() = if (deadReckonedDistanceM > 1.0) errorM / deadReckonedDistanceM * 100.0 else Double.NaN
+}
+
+/**
+ * The small, pasteable end-of-session report. Deliberately compact: this is what a tester sends
+ * to someone else to say "here is what we measured", without shipping a 40 MB trace.
+ */
+data class SessionSummary(
+    val sessionId: String,
+    val deviceModel: String,
+    val appVersion: String,
+    val modelVersion: String,
+    val vehicle: String,
+    val mount: String,
+    val durationSeconds: Double,
+    val imuSamples: Long,
+    val gnssFixes: Long,
+    val imuRateHz: Double,
+    val imuJitterMs: Double,
+    val inferenceMsP50: Double,
+    val inferenceMsP95: Double,
+    val tickMsP95: Double,
+    /** v_model / v_gnss over samples with GNSS speed above the analysis floor. */
+    val speedRatioMedian: Double,
+    val speedRatioIqr: Double,
+    /** Mean signed (v_model - v_gnss); near zero means random error, not a scale factor. */
+    val speedSignedBiasMps: Double,
+    val speedMaeMps: Double,
+    val speedPairs: Long,
+    /** Heading held by the engine minus GNSS course, degrees, while moving. */
+    val headingErrorMedianDeg: Double,
+    val headingErrorP90Deg: Double,
+    /** a_horiz / (v * |omega|) during turns. Well below 1 suggests phone rotation, not vehicle. */
+    val yawConsistencyMedian: Double,
+    val suspectedShakeEvents: Int,
+    val outages: List<OutageRecord>,
+    val markers: List<TelemetryMarker>,
+    val warnings: List<String>,
+)
