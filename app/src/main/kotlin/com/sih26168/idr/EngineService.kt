@@ -13,6 +13,8 @@ import android.os.IBinder
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.sih26168.idr.core.types.LatLon
+import com.sih26168.idr.core.types.VehicleMode
+import com.sih26168.idr.engine.RealEngine
 import com.sih26168.idr.core.types.Mode
 import com.sih26168.idr.core.types.PositioningEngine
 import com.sih26168.idr.androidsensors.SensorSource
@@ -87,6 +89,10 @@ class EngineService : Service() {
         recordingEngine.stopRecording()
         recordingEngine.stop()
         super.onDestroy()
+    }
+
+    fun setVehicleMode(mode: VehicleMode) {
+        (rawEngine as? RealEngine)?.setVehicleMode(mode)
     }
 
     fun setGnssMuted(muted: Boolean) {

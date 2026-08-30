@@ -16,6 +16,7 @@ import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.Mode
 import com.sih26168.idr.core.types.PositionState
 import com.sih26168.idr.core.types.PositioningEngine
+import com.sih26168.idr.core.types.VehicleMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,6 +69,11 @@ class RealEngine(
     @Volatile private var blendSpeedMps = 0f
     private var blendLogCounter = 0
     @Volatile private var lastAnchorNanos = 0L
+
+    // User-selected vehicle context (GUI). WALK damps published speed; CAR/BIKE unchanged.
+    @Volatile private var vehicleMode: VehicleMode = VehicleMode.CAR
+
+    fun setVehicleMode(mode: VehicleMode) { vehicleMode = mode }
 
     // Online delta-bias calibration (doc §14: "online recalibration against GNSS").
     // Field logs showed the delta model carries a device/domain-specific positive bias
@@ -243,11 +249,17 @@ class RealEngine(
         } else {
             if (stationary) 0f else vAbs
         }
+
+        // WALK-mode damping: car-trained models fabricate vehicle speeds from gait motion
+        // (field: 6 km/h walking read as 20-35). CAR/BIKE pass through unchanged.
+        val speedOut = if (vehicleMode == VehicleMode.WALK)
+            (speedMps * config.walkingSpeedScale).coerceAtMost(config.walkingSpeedMaxMps)
+        else speedMps
         headingEstimator.predict((turnRad / dtSeconds).toFloat(), dtSeconds)
         val headingDeg = headingEstimator.headingDeg()
 
-        val deadReckoned = deadReckoner.step(speedMps, headingDeg, dtSeconds)
-        fusionFilter.predict(deadReckoned, speedMps, headingDeg, dtSeconds)
+        val deadReckoned = deadReckoner.step(speedOut, headingDeg, dtSeconds)
+        fusionFilter.predict(deadReckoned, speedOut, headingDeg, dtSeconds)
         val fused = fusionFilter.estimate()
         val matched = mapMatcher.snap(fused)
         // Snap is DISPLAY-ONLY. Resetting the dead-reckoner to the matched point erased all
@@ -258,7 +270,7 @@ class RealEngine(
         deadReckoner.reset(fused)
 
         publish(
-            lat = matched.lat, lon = matched.lon, speedMps = speedMps, headingDeg = headingDeg.toFloat(),
+            lat = matched.lat, lon = matched.lon, speedMps = speedOut, headingDeg = headingDeg.toFloat(),
             mode = modeArbiter.currentMode(tEndNanos), tEndNanos = tEndNanos, tickStartNanos = t0,
         )
     }

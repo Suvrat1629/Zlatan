@@ -10,6 +10,8 @@
   "blend_tau_seconds": 1200.0,
   "zupt_accel_threshold_mps2": 0.8,
   "zupt_gyro_threshold_rps": 0.15,
+  "walking_speed_scale": 0.3,
+  "walking_speed_max_mps": 2.5,
   "gnss_lost_no_fix_timeout_ms": 3000,
   "handover_slew_seconds": 1.5,
   "output_rate_hz": 10.0,

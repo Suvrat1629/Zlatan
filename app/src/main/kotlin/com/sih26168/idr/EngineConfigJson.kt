@@ -18,6 +18,8 @@ object EngineConfigJson {
             blendTauSeconds = o.optDouble("blend_tau_seconds", d.blendTauSeconds),
             zuptAccelThresholdMps2 = o.optDouble("zupt_accel_threshold_mps2", d.zuptAccelThresholdMps2.toDouble()).toFloat(),
             zuptGyroThresholdRps = o.optDouble("zupt_gyro_threshold_rps", d.zuptGyroThresholdRps.toDouble()).toFloat(),
+            walkingSpeedScale = o.optDouble("walking_speed_scale", d.walkingSpeedScale.toDouble()).toFloat(),
+            walkingSpeedMaxMps = o.optDouble("walking_speed_max_mps", d.walkingSpeedMaxMps.toDouble()).toFloat(),
             gnssLostNoFixTimeoutMs = o.optLong("gnss_lost_no_fix_timeout_ms", d.gnssLostNoFixTimeoutMs),
             handoverSlewSeconds = o.optDouble("handover_slew_seconds", d.handoverSlewSeconds),
             outputRateHz = o.optDouble("output_rate_hz", d.outputRateHz),

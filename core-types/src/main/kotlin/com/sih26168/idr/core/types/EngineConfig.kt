@@ -22,6 +22,11 @@ data class EngineConfig(
     val zuptAccelThresholdMps2: Float = 0.8f,
     val zuptGyroThresholdRps: Float = 0.15f,
 
+    // WALK mode damping: published speed = min(speed * scale, cap). Car-trained models
+    // misread gait as vehicle speed; this keeps walking display in a sane band.
+    val walkingSpeedScale: Float = 0.3f,
+    val walkingSpeedMaxMps: Float = 2.5f,
+
     val gnssLostNoFixTimeoutMs: Long = 3_000,
     val handoverSlewSeconds: Double = 1.5,
 

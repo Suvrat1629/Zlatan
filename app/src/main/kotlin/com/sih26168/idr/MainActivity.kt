@@ -30,6 +30,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.sih26168.idr.core.types.Geo
 import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.Mode
+import com.sih26168.idr.core.types.VehicleMode
+import com.google.android.material.button.MaterialButtonToggleGroup
 import com.sih26168.idr.core.types.PositionState
 import com.sih26168.idr.map.MapRenderer
 import com.sih26168.idr.map.OsmdroidMapRenderer
@@ -125,6 +127,17 @@ class MainActivity : AppCompatActivity() {
         findViewById<ImageButton>(R.id.recenter_button).setOnClickListener {
             mapRenderer.recenter()
         }
+
+        findViewById<MaterialButtonToggleGroup>(R.id.vehicle_mode_group)
+            .addOnButtonCheckedListener { _, checkedId, isChecked ->
+                if (!isChecked) return@addOnButtonCheckedListener
+                val mode = when (checkedId) {
+                    R.id.mode_walk -> VehicleMode.WALK
+                    R.id.mode_bike -> VehicleMode.BIKE
+                    else -> VehicleMode.CAR
+                }
+                service?.setVehicleMode(mode)
+            }
         findViewById<ImageButton>(R.id.calibrate_compass_button).setOnClickListener {
             startActivity(Intent(this, MagnetometerCalibrationActivity::class.java))
         }

@@ -144,6 +144,41 @@
         app:layout_constraintTop_toBottomOf="@id/speed_card"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Vehicle mode selector (Walk damps model speed; Bike/Car use full weights) -->
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/vehicle_mode_group"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        app:singleSelection="true"
+        app:selectionRequired="true"
+        app:checkedButton="@id/mode_car"
+        app:layout_constraintBottom_toTopOf="@id/action_bar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/mode_walk"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/mode_walk" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/mode_bike"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/mode_bike" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/mode_car"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/mode_car" />
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
     <!-- ===================== Bottom action bar ===================== -->
 
     <com.google.android.material.card.MaterialCardView
