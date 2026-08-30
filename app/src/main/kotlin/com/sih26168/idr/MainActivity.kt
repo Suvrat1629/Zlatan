@@ -31,7 +31,9 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.sih26168.idr.core.types.Geo
 import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.Mode
+import com.sih26168.idr.core.types.MotionProfile
 import com.sih26168.idr.core.types.PositionState
+import com.google.android.material.button.MaterialButtonToggleGroup
 import com.sih26168.idr.map.MapRenderer
 import com.sih26168.idr.map.OsmdroidMapRenderer
 import com.sih26168.idr.map.PositionInterpolator
@@ -51,6 +53,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var muteToggle: Button
     private lateinit var recordButton: Button
     private lateinit var compareToggle: Button
+    private lateinit var profileGroup: MaterialButtonToggleGroup
+    private lateinit var motionProfileStore: MotionProfileStore
     private lateinit var permissionOverlay: View
     private lateinit var permissionMessage: TextView
     private lateinit var grantPermissionButton: Button
@@ -122,6 +126,20 @@ class MainActivity : AppCompatActivity() {
             val enabled = !compareToggle.isSelected
             compareToggle.isSelected = enabled
             mapRenderer.setCompareMode(enabled)
+        }
+
+        motionProfileStore = MotionProfileStore(this)
+        profileGroup = findViewById(R.id.profile_group)
+        // Restore the persisted choice after layout (check() before the group is
+        // laid out is dropped), then start listening for user changes.
+        profileGroup.post {
+            profileGroup.check(buttonIdForProfile(motionProfileStore.profile))
+            profileGroup.addOnButtonCheckedListener { _, checkedId, isChecked ->
+                if (!isChecked) return@addOnButtonCheckedListener
+                val profile = profileForButtonId(checkedId) ?: return@addOnButtonCheckedListener
+                motionProfileStore.profile = profile
+                service?.setMotionProfile(profile)
+            }
         }
         findViewById<ImageButton>(R.id.recenter_button).setOnClickListener {
             mapRenderer.recenter()
@@ -253,6 +271,19 @@ class MainActivity : AppCompatActivity() {
         Mode.GNSS -> getString(R.string.mode_gnss)
         Mode.DEGRADED -> getString(R.string.mode_degraded)
         Mode.DEAD_RECKONING -> getString(R.string.mode_dead_reckoning)
+    }
+
+    private fun buttonIdForProfile(profile: MotionProfile): Int = when (profile) {
+        MotionProfile.WALK -> R.id.profile_walk
+        MotionProfile.BIKE -> R.id.profile_bike
+        MotionProfile.CAR -> R.id.profile_car
+    }
+
+    private fun profileForButtonId(id: Int): MotionProfile? = when (id) {
+        R.id.profile_walk -> MotionProfile.WALK
+        R.id.profile_bike -> MotionProfile.BIKE
+        R.id.profile_car -> MotionProfile.CAR
+        else -> null
     }
 
     /** Mode palette (semantic, stable across day/night) — see idr-android-ui §4. */

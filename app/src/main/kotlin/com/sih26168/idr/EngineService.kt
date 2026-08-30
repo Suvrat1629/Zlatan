@@ -14,7 +14,9 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.Mode
+import com.sih26168.idr.core.types.MotionProfile
 import com.sih26168.idr.core.types.PositioningEngine
+import com.sih26168.idr.engine.RealEngine
 import com.sih26168.idr.androidsensors.SensorSource
 import java.io.File
 import java.text.SimpleDateFormat
@@ -45,6 +47,7 @@ class EngineService : Service() {
         val lastKnown = lastKnownLocation()
         rawEngine = if (lastKnown != null) EngineFactory.create(this, lastKnown) else EngineFactory.create(this)
         recordingEngine = TripRecordingEngine(rawEngine)
+        applySpeedCeiling(MotionProfileStore(this).profile)
         createNotificationChannel()
         try {
             sensorSource = SensorSource(this, recordingEngine)
@@ -91,6 +94,19 @@ class EngineService : Service() {
 
     fun setGnssMuted(muted: Boolean) {
         gnssSource?.setMuted(muted)
+    }
+
+    /**
+     * Apply a travel-mode speed ceiling live. The speed model is vehicle-trained,
+     * so today this is the only real effect of the profile — see [MotionProfile].
+     */
+    fun setMotionProfile(profile: MotionProfile) {
+        MotionProfileStore(this).profile = profile
+        applySpeedCeiling(profile)
+    }
+
+    private fun applySpeedCeiling(profile: MotionProfile) {
+        (rawEngine as? RealEngine)?.setSpeedCeiling(profile.speedMaxMps)
     }
 
     fun toggleRecording(): Boolean {

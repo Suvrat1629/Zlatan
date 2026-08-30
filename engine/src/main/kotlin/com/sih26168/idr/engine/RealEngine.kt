@@ -52,6 +52,15 @@ class RealEngine(
     private val _state = MutableStateFlow(PositionState(lat = startAt.lat, lon = startAt.lon))
     override val state: StateFlow<PositionState> = _state.asStateFlow()
 
+    // Absolute speed ceiling. Starts from config; MotionProfile (WALK/BIKE/CAR)
+    // can lower it at runtime so a hand-carried phone doesn't report vehicle speed.
+    @Volatile private var speedCeilingMps: Float = config.speedMaxMps
+
+    /** Set the per-profile speed ceiling (m/s). Clamped to the config maximum. */
+    fun setSpeedCeiling(mps: Float) {
+        speedCeilingMps = mps.coerceIn(config.speedMinMps, config.speedMaxMps)
+    }
+
     @Volatile private var lastGyroZ = 0f
     // Heading must integrate EVERY gyro sample: point-sampling one z-rate per 100 ms tick
     // aliases fast turns (a 1-2 s 90-degree turn gets undercounted while a slow U-turn
@@ -167,7 +176,7 @@ class RealEngine(
             // every GNSS fix (map position visibly desynced from real GPS).
             deadReckoner.reset(LatLon(fix.lat, fix.lon))
             // Blend anchor: a trusted fix re-anchors the propagated speed estimate.
-            blendSpeedMps = fix.speedMps.coerceIn(config.speedMinMps, config.speedMaxMps)
+            blendSpeedMps = fix.speedMps.coerceIn(config.speedMinMps, speedCeilingMps)
             lastAnchorNanos = fix.tNanos
 
             // Online dv-bias update: compare the delta model's average prediction over the
@@ -200,7 +209,7 @@ class RealEngine(
         val features = FeatureExtractor.featureWindow(rawWindow)
         val normalized = normalizer.apply(features)
         val dtSeconds = 1.0 / config.outputRateHz
-        val vAbs = speedEstimator.estimate(normalized).coerceIn(config.speedMinMps, config.speedMaxMps)
+        val vAbs = speedEstimator.estimate(normalized).coerceIn(config.speedMinMps, speedCeilingMps)
 
         // Drain the fully-integrated turn angle accumulated since the last tick and feed it
         // to the heading estimator as an equivalent mean rate (interface unchanged).
@@ -223,7 +232,7 @@ class RealEngine(
             val tSec = ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
             val lam = (tSec / (tSec + config.blendTauSeconds)).toFloat()
             blendSpeedMps = ((1f - lam) * (blendSpeedMps + dv * dtSeconds.toFloat()) + lam * vAbs)
-                .coerceIn(config.speedMinMps, config.speedMaxMps)
+                .coerceIn(config.speedMinMps, speedCeilingMps)
             if (blendLogCounter++ % 20 == 0) {
                 System.out.println(
                     "IDR-BLEND vAbs=${"%.1f".format(vAbs * 3.6f)}km/h dvRaw=${"%.2f".format(dvRaw)} " +

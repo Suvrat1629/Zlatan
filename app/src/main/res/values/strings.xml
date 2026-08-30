@@ -13,6 +13,10 @@
     <string name="speed_format">%.0f</string>
     <string name="speed_placeholder">0</string>
     <string name="speed_unit">km/h</string>
+    <string name="profile_walk">Walk</string>
+    <string name="profile_bike">Bike</string>
+    <string name="profile_car">Car</string>
+    <string name="profile_selector">Travel mode</string>
     <string name="recenter">Recenter on my location</string>
     <string name="compare_toggle">Compare</string>
     <string name="drift_format">Drift ~%1$.1f%% · %2$.0f m since GPS lost</string>

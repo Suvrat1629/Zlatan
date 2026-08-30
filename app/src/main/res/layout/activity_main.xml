@@ -70,6 +70,88 @@
 
     </com.google.android.material.card.MaterialCardView>
 
+    <!-- Travel-mode selector. Single-select; checked segment fills with the
+         fix-blue accent, unchecked segments are just text on the scrim.
+         See MotionProfile — today it sets a per-mode speed ceiling. -->
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/profile_group"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/spacing_medium"
+        android:layout_marginTop="6dp"
+        android:background="@drawable/segmented_container"
+        android:padding="3dp"
+        app:checkedButton="@id/profile_car"
+        app:singleSelection="true"
+        app:selectionRequired="true"
+        app:layout_constraintTop_toBottomOf="@id/mode_badge_card"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/profile_walk"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minWidth="0dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="@string/profile_walk"
+            android:textColor="@color/segmented_fg"
+            android:textAppearance="?attr/textAppearanceLabelMedium"
+            app:backgroundTint="@color/segmented_bg"
+            app:cornerRadius="9dp"
+            app:icon="@drawable/ic_walk"
+            app:iconGravity="textStart"
+            app:iconPadding="4dp"
+            app:iconSize="16dp"
+            app:iconTint="@color/segmented_fg" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/profile_bike"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minWidth="0dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="@string/profile_bike"
+            android:textColor="@color/segmented_fg"
+            android:textAppearance="?attr/textAppearanceLabelMedium"
+            app:backgroundTint="@color/segmented_bg"
+            app:cornerRadius="9dp"
+            app:icon="@drawable/ic_bike"
+            app:iconGravity="textStart"
+            app:iconPadding="4dp"
+            app:iconSize="16dp"
+            app:iconTint="@color/segmented_fg" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/profile_car"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minWidth="0dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="@string/profile_car"
+            android:textColor="@color/segmented_fg"
+            android:textAppearance="?attr/textAppearanceLabelMedium"
+            app:backgroundTint="@color/segmented_bg"
+            app:cornerRadius="9dp"
+            app:icon="@drawable/ic_car"
+            app:iconGravity="textStart"
+            app:iconPadding="4dp"
+            app:iconSize="16dp"
+            app:iconTint="@color/segmented_fg" />
+
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/drift_card"
         android:layout_width="wrap_content"
@@ -80,7 +162,7 @@
         app:cardBackgroundColor="@color/hud_scrim"
         app:cardCornerRadius="@dimen/hud_corner_radius"
         app:cardElevation="@dimen/hud_elevation"
-        app:layout_constraintTop_toBottomOf="@id/mode_badge_card"
+        app:layout_constraintTop_toBottomOf="@id/profile_group"
         app:layout_constraintStart_toStartOf="parent"
         tools:visibility="visible">
 
