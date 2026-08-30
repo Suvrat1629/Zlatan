@@ -29,7 +29,7 @@ class TraceWriter(file: File) : Closeable {
                 "IMU,$tNanos,$ax,$ay,$az,$grx,$gry,$grz,$gx,$gy,$gz"
             }
             is TraceEvent.Gnss -> with(event.record) {
-                "GNSS,$tNanos,$lat,$lon,$speedMps,$bearingDeg,$horizAccM,$satsInFix,$irnssSatsInFix"
+                "GNSS,$tNanos,$lat,$lon,$speedMps,$bearingDeg,$horizAccM,$satsInFix,$irnssSatsInFix,$bearingValid"
             }
             is TraceEvent.Lost -> "LOST,${event.tNanos}"
         }
@@ -67,6 +67,9 @@ object TraceReader {
                     speedMps = parts[4].toFloat(), bearingDeg = parts[5].toFloat(),
                     horizAccM = parts[6].toFloat(),
                     satsInFix = parts[7].toInt(), irnssSatsInFix = parts[8].toInt(),
+                    // Older trace files (9 fields) predate bearing validity tracking --
+                    // default false (untrusted), consistent with GnssFixRecord's own default.
+                    bearingValid = if (parts.size > 9) parts[9].toBoolean() else false,
                 )
             )
             "LOST" -> TraceEvent.Lost(parts[1].toLong())

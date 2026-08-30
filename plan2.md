@@ -200,10 +200,114 @@ capture. Separating the two properly needs real Allan variance analysis on a sta
 recording (architecture doc §11's own recommended method), not something derivable from
 aggregate cross-track percentages. Open item, not a blocker for anything above.
 
-Next up: get this validated against real recorded traces (needs either a device trace file or
-access to a raw IO-VNBD drive) before any live wiring; NHC is now a much more natural next
-addition since heading is finally a real state with real covariance for NHC to correct; or
-move to the map matcher track.
+**2026-08-30 — NHC reconsidered; GNSS bearing wired in as a direct heading measurement
+instead.** Classical NHC (lateral body-frame velocity = 0) has no state to attach to here:
+the motion model (`n += v*cos(theta)*dt`, `e += v*sin(theta)*dt`) has no lateral velocity
+degree of freedom at all — it structurally can't move sideways except through heading error,
+so NHC is already implicit by construction. Adding it explicitly would constrain a quantity
+with no other information source, i.e. a no-op.
+
+What actually delivers NHC's value here: `updateWithGnss` was receiving `bearingDeg` and
+silently ignoring it — heading was only ever corrected indirectly via the n/e-theta
+covariance. Wired GNSS course-over-ground in as a direct scalar heading measurement (gated on
+a minimum speed, config `ekfMinBearingTrustSpeedMps`, since bearing is unreliable
+near-stationary).
+
+Found a real landmine while doing this: `GnssFixRecord.bearingDeg` had no validity signal —
+`GnssSource.kt` defaults it to `0f` whenever Android's `location.hasBearing()` is false, so a
+fix with unavailable bearing could be silently misread as "heading due north". Fixed properly
+rather than gated around: added `bearingValid: Boolean` to `GnssFixRecord`, threaded through
+`PositioningEngine.onGnssFix` -> `RealEngine`/`StubEngine`/`TripRecordingEngine` ->
+`GnssSource` (`bearingValid = location.hasBearing()`), and through `core-replay`'s
+`TraceFormat`/`ReplayEngine` (old 9-field trace lines parse as `bearingValid = false`,
+consistent with the "unknown -> untrusted" default used everywhere else). `FusionFilter` and
+`ErrorStateEkf` both took the new parameter, defaulted `false` so no existing call site broke.
+
+Verified: full JVM suite (`core-types`, `core-nav`, `engine`, `core-map`, `core-assets`)
+green, AND `:app:compileDebugKotlin` clean — the Android-only files (`GnssSource.kt`,
+`TripRecordingEngine.kt`) are real, compiled, verified changes, not best-effort-unverified
+ones. Two new tests: a valid, fast-moving bearing measurably shrinks heading uncertainty
+beyond what position coupling alone gives; an invalid or too-slow bearing is a no-op,
+identical to the position-only path.
+
+**Still not completable in this environment**: replay validation against real recorded
+traces — this repo has none.
+
+**2026-08-30 — wired into EngineFactory, gated behind a config flag, ON by default.**
+Held this back earlier reasoning "don't make it the default until it beats blend on real
+replayed traces" — but that data was never going to materialize in this environment, and
+the actual available real-world test is the user's own phone, which this was blocking for no
+reason. `EngineConfig.useErrorStateEkf` (default `true`, also settable via
+`config.json`'s `use_error_state_ekf`) switches `EngineFactory` between `ErrorStateEkf` and
+the old `PassthroughFusionFilter`. Verified `:app:compileDebugKotlin` and
+`:app:assembleDebug` both succeed — a real installable APK builds. To fall back to the old
+behavior for comparison: set `"use_error_state_ekf": false` in `app/src/main/assets/config.json`
+and rebuild.
+
+**Not yet swapped**: the fusion filter is the EKF now, but `RealEngine`'s own hand-tuned
+speed blend (anchor+delta, dv-bias EMA, ZUPT) is untouched — the EKF receives that blend's
+*output* as its speed control input, it doesn't replace it. What's actually being tested on
+a real drive now is: EKF position/heading fusion + GNSS-bearing correction, on top of the
+existing speed pipeline.
+
+## 3b. Map matcher progress log
+
+**2026-08-30 — RoadGraph landed; HMM built on top (§3 steps 2-4, uncommitted).** Scoped per an
+advisor check before starting: build steps 2-4 now, stop before step 6 (wiring the matcher as
+an EKF measurement) — that step re-treads exactly the ground commit `471520c` reverted
+(snapping the reckoner itself erased cross-track motion) and structurally can't start until
+step 4's covariance exists anyway. Step 1 (extending the Overpass query for `highway=`/
+`oneway=`/`tunnel=`/`layer=`) turned out not to be a real prerequisite despite this file
+originally calling it one: the HMM's own inputs — perpendicular-distance emission,
+route-distance-vs-great-circle-distance transition, top-k hypotheses — are all geometry/
+topology only. `RoadGraph` carries those attribute fields as nullable so the day that query is
+extended is a data upgrade, not a code change.
+
+`RoadGraph` (new, `core-map`) is now the single shared topology + spatial index: nodes/edges
+built from the polylines once, a grid index lifted from `RoadMatcher`'s old per-instance one,
+bounded and unbounded Dijkstra (`shortestPathDistanceM`/`shortestPath`) over directed adjacency
+that defaults to bidirectional (no one-way data exists yet). Anchored on `LocalFrame` from
+`core-types/Geo.kt` — the shared frame utility `ErrorStateEkf` already uses, promoted during
+the EKF work but left unused by the map code until now (that gap is closed). `RoadMatcher` and
+`RoutePlanner` are both refactored to consume it instead of independently rebuilding
+connectivity from raw ways: `RoutePlanner`'s old O(nodes) linear nearest-node scan is gone,
+replaced by the same grid query the matcher uses.
+
+`HmmMapMatcher` (new) keeps up to `hmmCandidateCount` hypotheses, scored each tick with a
+Newson-Krumm-style emission (perpendicular distance) and transition (route-distance vs
+great-circle-distance mismatch) term — online forward decode, no backtrace, since nothing
+downstream replays history to correct retroactively. `MapMatcher.snap()` now returns
+`MapMatchResult(position, uncertaintyM, onRoad)` instead of a bare `LatLon` (§3 step 4); the
+one live caller, `RealEngine.tickOnce()`, takes `.position` and is otherwise untouched — the
+matcher is still display-only, `deadReckoner.reset(fused)` is unchanged.
+
+Real finding, not just plumbing: `snap()` is called every engine tick (10 Hz), which at driving
+speed is roughly a metre or two between calls — far too little for the route-distance/
+great-circle term to discriminate anything, silently degenerating the HMM into emission-only
+(i.e. greedy) scoring. Fixed with `hmmMinAdvanceDisplacementM` (default 8 m): the hypothesis
+chain only advances once genuine displacement has accumulated; ticks in between republish the
+last result. All new parameters are `EngineConfig`/`config.json` fields
+(`use_hmm_map_matcher`, default `false` — RoadMatcher stays the default, matching the
+cautious-until-validated pattern the EKF started with, since unlike the EKF this hasn't yet
+been run against a real drive at all).
+
+Validated the same way the EKF's outage test was — synthetic, since no recorded device traces
+exist in this repo/environment (plan2.md has said this twice already for the EKF; still true
+here). `HmmMapMatcherTest` builds two parallel roads 8 m apart joined by cross streets at both
+ends (a realistic minimal topology — a service road beside a main road), feeds a trace with one
+noisy fix 0.1 m from the wrong road and 7.9 m from the correct one, and shows `RoadMatcher`
+gets pulled onto the wrong road (0.1 m beats even its sticky bonus) while `HmmMapMatcher` stays
+on the correct one — the route from its live hypothesis to the wrong candidate (~68 m via the
+nearest junction) is wildly inconsistent with the ~21.5 m actually travelled, while staying put
+is fully consistent. `RoadGraphTest` separately checks `routeDistanceM` picks the shorter of
+two junction paths and returns null when genuinely unreachable within the search cutoff. Full
+JVM suite (all modules) and `:app:compileDebugKotlin`/`:app:assembleDebug` verified clean.
+
+**Not done**: step 1 (attribute extraction — data upgrade, not blocking), step 5 in the sense
+the doc means it (validation against a real recorded track — no such data here, same gap as
+the EKF's), step 6 (wiring as an EKF measurement — deliberately deferred, needs its own care
+given what step 6 replaces already failed once), tunnel-portal landmarks (needs step 1's tunnel
+lengths).
 
 ## 4. Sequencing note
 

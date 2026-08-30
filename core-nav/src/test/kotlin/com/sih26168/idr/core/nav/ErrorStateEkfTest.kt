@@ -4,10 +4,20 @@ import com.sih26168.idr.core.types.EngineConfig
 import com.sih26168.idr.core.types.Geo
 import com.sih26168.idr.core.types.LatLon
 import kotlin.test.Test
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ErrorStateEkfTest {
     private val start = LatLon(12.9716, 77.5946)
+
+    @Test
+    fun passthroughHasNoHeadingButEkfDoes() {
+        assertNull(PassthroughFusionFilter(start).headingDeg())
+
+        val ekf = ErrorStateEkf(start)
+        ekf.predict(start, speedMps = 10f, headingDeg = 45.0, dtSeconds = 0.1)
+        assertTrue(kotlin.math.abs(ekf.headingDeg()!! - 45.0) < 1e-6)
+    }
 
     @Test
     fun predictWithoutGnssMovesForwardAlongHeading() {
@@ -79,6 +89,56 @@ class ErrorStateEkfTest {
             "a single accurate fix after a long outage should correct MOST of the error in " +
                 "one update, not need many fixes to claw back (before=$errorBeforeFix m, " +
                 "after=$errorAfterOneFix m)",
+        )
+    }
+
+    @Test
+    fun validBearingCorrectsHeadingFasterThanPositionAlone() {
+        val withBearing = ErrorStateEkf(start)
+        val positionOnly = ErrorStateEkf(start)
+
+        // Both drift identically with a heading bias, no GNSS yet.
+        repeat(300) {
+            withBearing.predict(start, speedMps = 15f, headingDeg = 10.0, dtSeconds = 0.1)
+            positionOnly.predict(start, speedMps = 15f, headingDeg = 10.0, dtSeconds = 0.1)
+        }
+
+        val truePos = Geo.stepForward(start, headingDeg = 0.0, forwardM = 15.0 * 30.0)
+        withBearing.updateWithGnss(truePos, speedMps = 15f, bearingDeg = 0f, horizAccM = 3f, bearingValid = true)
+        positionOnly.updateWithGnss(truePos, speedMps = 15f, bearingDeg = 0f, horizAccM = 3f, bearingValid = false)
+
+        assertTrue(
+            withBearing.headingUncertaintyDeg() < positionOnly.headingUncertaintyDeg(),
+            "a valid GNSS bearing should shrink heading uncertainty beyond what position " +
+                "coupling alone gives (withBearing=${withBearing.headingUncertaintyDeg()} deg, " +
+                "positionOnly=${positionOnly.headingUncertaintyDeg()} deg)",
+        )
+    }
+
+    @Test
+    fun bearingIgnoredWhenInvalidOrBelowSpeedThreshold() {
+        val truePos = Geo.stepForward(start, headingDeg = 0.0, forwardM = 100.0)
+
+        val invalidBearing = ErrorStateEkf(start)
+        val tooSlow = ErrorStateEkf(start)
+        repeat(50) {
+            invalidBearing.predict(start, speedMps = 10f, headingDeg = 10.0, dtSeconds = 1.0)
+            tooSlow.predict(start, speedMps = 10f, headingDeg = 10.0, dtSeconds = 1.0)
+        }
+        invalidBearing.updateWithGnss(truePos, speedMps = 10f, bearingDeg = 0f, horizAccM = 3f, bearingValid = false)
+        tooSlow.updateWithGnss(truePos, speedMps = 1f, bearingDeg = 0f, horizAccM = 3f, bearingValid = true)
+
+        // Neither gate should let the bearing measurement fire, so both should behave
+        // exactly like the position-only update (same heading uncertainty).
+        val reference = ErrorStateEkf(start)
+        repeat(50) { reference.predict(start, speedMps = 10f, headingDeg = 10.0, dtSeconds = 1.0) }
+        reference.updateWithGnss(truePos, speedMps = 10f, bearingDeg = 0f, horizAccM = 3f, bearingValid = false)
+
+        assertTrue(
+            kotlin.math.abs(invalidBearing.headingUncertaintyDeg() - reference.headingUncertaintyDeg()) < 1e-9,
+        )
+        assertTrue(
+            kotlin.math.abs(tooSlow.headingUncertaintyDeg() - reference.headingUncertaintyDeg()) < 1e-9,
         )
     }
 

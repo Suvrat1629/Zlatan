@@ -24,6 +24,14 @@ object EngineConfigJson {
             handoverSlewSeconds = o.optDouble("handover_slew_seconds", d.handoverSlewSeconds),
             outputRateHz = o.optDouble("output_rate_hz", d.outputRateHz),
             engineTickP95BudgetMs = o.optDouble("engine_tick_p95_budget_ms", d.engineTickP95BudgetMs.toDouble()).toFloat(),
+            useErrorStateEkf = o.optBoolean("use_error_state_ekf", d.useErrorStateEkf),
+            useHmmMapMatcher = o.optBoolean("use_hmm_map_matcher", d.useHmmMapMatcher),
+            hmmMaxSnapM = o.optDouble("hmm_max_snap_m", d.hmmMaxSnapM.toDouble()).toFloat(),
+            hmmCandidateCount = o.optInt("hmm_candidate_count", d.hmmCandidateCount),
+            hmmEmissionSigmaM = o.optDouble("hmm_emission_sigma_m", d.hmmEmissionSigmaM.toDouble()).toFloat(),
+            hmmTransitionBetaM = o.optDouble("hmm_transition_beta_m", d.hmmTransitionBetaM.toDouble()).toFloat(),
+            hmmMaxTransitionSearchM = o.optDouble("hmm_max_transition_search_m", d.hmmMaxTransitionSearchM.toDouble()).toFloat(),
+            hmmMinAdvanceDisplacementM = o.optDouble("hmm_min_advance_displacement_m", d.hmmMinAdvanceDisplacementM.toDouble()).toFloat(),
         )
     }
 }

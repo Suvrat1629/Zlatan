@@ -6,11 +6,15 @@ interface FusionFilter {
 
     fun predict(deadReckoned: LatLon, speedMps: Float, headingDeg: Double, dtSeconds: Double)
 
-    fun updateWithGnss(fix: LatLon, speedMps: Float, bearingDeg: Float, horizAccM: Float)
+    fun updateWithGnss(fix: LatLon, speedMps: Float, bearingDeg: Float, horizAccM: Float, bearingValid: Boolean = false)
 
     fun estimate(): LatLon
 
     fun uncertaintyM(): Float
+
+    /** The filter's own corrected heading (degrees), if it tracks one. Null means "doesn't
+     *  track heading" -- callers should fall back to their own heading estimator. */
+    fun headingDeg(): Double? = null
 }
 
 class PassthroughFusionFilter(initial: LatLon) : FusionFilter {
@@ -20,7 +24,7 @@ class PassthroughFusionFilter(initial: LatLon) : FusionFilter {
         current = deadReckoned
     }
 
-    override fun updateWithGnss(fix: LatLon, speedMps: Float, bearingDeg: Float, horizAccM: Float) {
+    override fun updateWithGnss(fix: LatLon, speedMps: Float, bearingDeg: Float, horizAccM: Float, bearingValid: Boolean) {
         current = fix
     }
 

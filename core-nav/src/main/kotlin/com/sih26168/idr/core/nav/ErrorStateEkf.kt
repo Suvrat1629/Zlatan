@@ -84,7 +84,7 @@ class ErrorStateEkf(
         symmetrize()
     }
 
-    override fun updateWithGnss(fix: LatLon, speedMps: Float, bearingDeg: Float, horizAccM: Float) {
+    override fun updateWithGnss(fix: LatLon, speedMps: Float, bearingDeg: Float, horizAccM: Float, bearingValid: Boolean) {
         val z = frame.toLocal(fix)
         val r = maxOf(horizAccM, config.ekfMinGnssAccuracyM).toDouble()
         val rVar = r * r
@@ -122,11 +122,35 @@ class ErrorStateEkf(
         )
         p = matMul(imKH, p)
         symmetrize()
+
+        // GNSS course-over-ground as a direct heading measurement -- corrects theta faster
+        // than waiting for it to emerge from the n/e-theta covariance alone. Gated on
+        // bearingValid (Android reports 0f, not "unknown", when no bearing is available) and
+        // a minimum speed (bearing is unreliable near-stationary).
+        if (bearingValid && speedMps > config.ekfMinBearingTrustSpeedMps) {
+            val bearingRad = Math.toRadians(bearingDeg.toDouble())
+            val yTheta = ((bearingRad - theta + Math.PI).mod(2 * Math.PI)) - Math.PI
+            val rTheta = Math.toRadians(config.ekfGnssBearingNoiseDeg.toDouble()).let { it * it }
+            updateScalar(2, yTheta, rTheta)
+        }
+    }
+
+    /** Scalar Kalman update on state[idx] given innovation y and measurement noise r. */
+    private fun updateScalar(idx: Int, y: Double, r: Double) {
+        val s = p[idx][idx] + r
+        if (s < 1e-12) return
+        val k = DoubleArray(3) { i -> p[i][idx] / s }
+        n += k[0] * y; e += k[1] * y; theta += k[2] * y
+        val newP = Array(3) { i -> DoubleArray(3) { j -> p[i][j] - k[i] * p[idx][j] } }
+        p = newP
+        symmetrize()
     }
 
     override fun estimate(): LatLon = frame.toLatLon(LocalEnu(n, e))
 
     override fun uncertaintyM(): Float = sqrt((p[0][0] + p[1][1]) / 2.0).toFloat()
+
+    override fun headingDeg(): Double = Math.toDegrees(theta).mod(360.0)
 
     /** Heading uncertainty (1 std, degrees). Not on FusionFilter yet. */
     fun headingUncertaintyDeg(): Double = Math.toDegrees(sqrt(p[2][2]))

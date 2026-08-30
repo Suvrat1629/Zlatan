@@ -62,6 +62,7 @@ class StubEngine(
         lat: Double, lon: Double,
         speedMps: Float, bearingDeg: Float, horizAccM: Float,
         satsInFix: Int, irnssSatsInFix: Int,
+        bearingValid: Boolean,
     ) {
         if (!hasReceivedFix) {
             this.lat = lat
