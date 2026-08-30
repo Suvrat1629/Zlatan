@@ -30,6 +30,13 @@ data class EngineConfig(
     val gnssLostNoFixTimeoutMs: Long = 3_000,
     val handoverSlewSeconds: Double = 1.5,
 
+    // ErrorStateEkf process/measurement noise (plan2.md §2). ekfHeadingArwDegPerSqrtSec is
+    // an Angle Random Walk coefficient fit from real IO-VNBD cross-track-vs-duration data.
+    val ekfInitialUncertaintyM: Float = 10f,
+    val ekfSpeedNoiseMps: Float = 1.0f,
+    val ekfHeadingArwDegPerSqrtSec: Float = 1.41f,
+    val ekfMinGnssAccuracyM: Float = 5f,
+
     val outputRateHz: Double = 10.0,
 
     val engineTickP95BudgetMs: Float = 50f,
