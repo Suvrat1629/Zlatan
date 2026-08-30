@@ -153,8 +153,13 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
         super.onResume()
         val mag = magnetometer ?: return
         val gravity = gravitySensor ?: return
-        sensorManager.registerListener(sensorListener, mag, SensorManager.SENSOR_DELAY_GAME)
-        sensorManager.registerListener(sensorListener, gravity, SensorManager.SENSOR_DELAY_GAME)
+        // maxReportLatencyUs=0 explicitly: the 3-arg overload leaves batching up to the
+        // vendor's sensor hub, and on this Vivo hardware that meant samples queued in a FIFO
+        // and arrived in one bursty flush instead of streaming — see SensorSource.kt, which
+        // hit the same thing and already disables it this way for the model's IMU feed.
+        val samplingPeriodUs = SensorManager.SENSOR_DELAY_GAME
+        sensorManager.registerListener(sensorListener, mag, samplingPeriodUs, 0)
+        sensorManager.registerListener(sensorListener, gravity, samplingPeriodUs, 0)
     }
 
     override fun onPause() {

@@ -215,12 +215,21 @@ class MagnetometerCalibrator {
                 centerX = sumX / recentFilled; centerY = sumY / recentFilled; centerZ = sumZ / recentFilled
             }
             val octantCounts = IntArray(8)
+            var sumSqDist = 0.0
             for (i in 0 until recentFilled) {
-                val octant = (if (recentX[i] - centerX >= 0) 1 else 0) or
-                    (if (recentY[i] - centerY >= 0) 2 else 0) or
-                    (if (recentZ[i] - centerZ >= 0) 4 else 0)
+                val dx = recentX[i] - centerX
+                val dy = recentY[i] - centerY
+                val dz = recentZ[i] - centerZ
+                val octant = (if (dx >= 0) 1 else 0) or (if (dy >= 0) 2 else 0) or (if (dz >= 0) 4 else 0)
                 octantCounts[octant]++
+                sumSqDist += dx * dx + dy * dy + dz * dz
             }
+            // A phone sitting still has readings clustered in a tiny noise cloud around the
+            // mean — pure noise flips the *sign* of the deviation unpredictably, so it can
+            // spuriously light up all 8 octants without the phone ever having moved. Require
+            // real spread, not just directional sign diversity, before counting it.
+            val spreadRmsUt = sqrt(sumSqDist / recentFilled)
+            if (spreadRmsUt < MIN_COVERAGE_SPREAD_UT) return 0f
             return octantCounts.count { it >= MIN_SAMPLES_PER_OCTANT } / 8f
         }
 
@@ -276,9 +285,14 @@ class MagnetometerCalibrator {
             isCoverageGoodEnough && isConsistencyGoodEnough && isFieldStrengthPlausible
 
     companion object {
-        private const val COVERAGE_BUFFER_CAPACITY = 600
+        // At ~100Hz raw sensor rate, 600 was only ~6 seconds of history — too short for a
+        // real figure-8, which can easily take 15-30s and doesn't sweep every orientation in
+        // any single 6s slice. 3000 (~30s) is still trivial memory (36KB) and lets coverage
+        // reflect the whole session instead of whatever the last few seconds happened to be.
+        private const val COVERAGE_BUFFER_CAPACITY = 3000
         private const val MIN_SAMPLES_FOR_FIT = 40L
         private const val MIN_SAMPLES_PER_OCTANT = 15L
+        private const val MIN_COVERAGE_SPREAD_UT = 3.0
         private const val MIN_RESIDUAL_SAMPLES = 60L
         private const val MIN_AXIS_RMS_UT = 0.5
         private const val MIN_COVERAGE_FRACTION = 0.75f

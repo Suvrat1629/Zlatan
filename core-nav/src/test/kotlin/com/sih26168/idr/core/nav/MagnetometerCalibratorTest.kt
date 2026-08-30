@@ -86,6 +86,21 @@ class MagnetometerCalibratorTest {
     }
 
     @Test
+    fun stationaryNoiseNeverReportsCoverageEvenIfItTouchesAllOctants() {
+        // A phone sitting still: readings cluster in a tiny (sub-µT) noise cloud around a
+        // fixed point. Symmetric noise can flip the *sign* of the deviation across all 8
+        // octants without the phone ever moving — this must not read as "direction coverage".
+        val calibrator = MagnetometerCalibrator()
+        val rng = kotlin.random.Random(42)
+        repeat(2000) {
+            val jitter = { (rng.nextFloat() - 0.5f) * 0.2f } // +/-0.1 uT, well under sensor-scale noise
+            calibrator.addSample(40f + jitter(), 5f + jitter(), 3f + jitter())
+        }
+        assertEquals(0f, calibrator.coverageFraction, "stationary noise must not read as coverage")
+        assertFalse(calibrator.isGoodEnough)
+    }
+
+    @Test
     fun implausibleFieldStrengthIsNotGoodEnough() {
         val calibrator = MagnetometerCalibrator()
         // Radius ~500 µT — an order of magnitude above Earth's field, e.g. held right next
