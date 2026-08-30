@@ -77,6 +77,72 @@ data class EngineConfig(
     // speed (Android's own bearing gets noisy/unreliable near-stationary).
     val ekfMinBearingTrustSpeedMps: Float = 3f,
     val ekfGnssBearingNoiseDeg: Float = 5f,
+
+    // --- gyro bias state (heading work plan F3) ---
+    // The error budget needs the yaw-rate bias held near 0.01 deg/s to keep cross-track inside
+    // budget over a 60 s outage; consumer MEMS in-run bias instability sits well above that, and
+    // removing a fitted CONSTANT bought nothing offline -- the bias moves within a drive, with
+    // temperature. So it is a state with a slow random walk, not a calibration constant.
+    /**
+     * 1-std of the initial bias estimate, deg/s. Deliberately tight, and the reason matters: with
+     * a mis-specified heading process noise (the configured ARW is fitted to aggregate cross-track
+     * medians and probably undershoots real gyro noise), an EKF attributes residuals to whichever
+     * state has the loosest prior. Give the bias a wide prior and it becomes a sink for angle
+     * random walk, which it then subtracts from every later rotation -- measurably worse than
+     * having no bias state at all. A factory-calibrated consumer MEMS gyro's residual bias is
+     * within a few tenths of a deg/s, so this is also the physical value.
+     */
+    val ekfInitialGyroBiasDps: Float = 0.3f,
+    /**
+     * Bias random-walk driving noise, deg/s per sqrt(second). Bias instability drifts over minutes
+     * -- with temperature, mostly -- not over seconds. Set it fast enough to chase gyro noise and
+     * the state stops modelling bias and starts modelling noise.
+     */
+    val ekfGyroBiasRandomWalkDpsPerSqrtSec: Float = 0.002f,
+    /** Measurement noise on the zero-velocity bias observation, deg/s. A stationary vehicle means
+     *  any measured yaw rate IS bias, so this is close to the sensor's own noise floor. */
+    val ekfZuptGyroNoiseDps: Float = 0.5f,
+
+    // --- GNSS innovation gating (architecture doc: divergence guard) ---
+    // A multipath fix in an urban canyon arrives with a confident-looking accuracy figure, so
+    // horizAccM alone cannot reject it. The filter's own innovation can: NIS = y' S^-1 y is
+    // chi-square with 2 degrees of freedom for a 2D position measurement, so 9.21 is the 99th
+    // percentile. Above that, either the fix is wrong or the filter is -- see the consecutive
+    // reject limit below, which decides between those two.
+    val ekfGnssNisGate: Float = 9.21f,
+    /**
+     * Whether the NIS gate actually REJECTS, as opposed to only being measured.
+     *
+     * Off by default, deliberately. A statistical gate is only as trustworthy as the process noise
+     * it is measured against, and this filter's heading ARW is fitted to aggregate cross-track
+     * medians and is documented as probably undershooting real gyro noise. An overconfident filter
+     * makes honest fixes look like outliers, so switching rejection on now discards good GNSS --
+     * observed directly: a 3 m-accuracy fix was rejected outright while a 50 m one was accepted.
+     *
+     * So: measure NIS from day one, ship the distribution in telemetry, and turn rejection on once a
+     * real drive shows what the distribution actually looks like. Same pattern the map-match gate
+     * already uses -- collect the statistics with the action disabled.
+     */
+    val useGnssNisGate: Boolean = false,
+    /**
+     * Kinematic plausibility bound on a GNSS fix, m/s. Unlike NIS this does not depend on the
+     * filter believing itself: a fix implying the vehicle moved faster than this since the previous
+     * one is impossible regardless of how confident anything is. Safe to enforce immediately.
+     */
+    val gnssMaxImpliedSpeedMps: Float = 60f,
+    /**
+     * After this many consecutive rejections the filter, not the fix, is assumed wrong: a diverged
+     * state makes every honest fix look like an outlier, and a gate with no escape hatch would lock
+     * GNSS out permanently. On tripping, the next fix is accepted and the covariance inflated.
+     */
+    val ekfMaxConsecutiveGnssRejects: Int = 5,
+
+    // --- yaw plausibility (heading work plan F4a) ---
+    // A physical bound, not a filter: no road vehicle sustains this. Field telemetry recorded
+    // 271 deg/s while walking, which is hand motion being integrated as vehicle rotation. A
+    // magnitude clamp cannot harm a genuine turn -- unlike the low-pass that was considered and
+    // rejected, which would smear a real turn's onset by a few hundred milliseconds.
+    val maxYawRateDps: Float = 90f,
     // Switches RealEngine's fusion filter from PassthroughFusionFilter (hard-snap to each
     // GNSS fix) to ErrorStateEkf. See plan2.md for what's actually been validated.
     val useErrorStateEkf: Boolean = true,

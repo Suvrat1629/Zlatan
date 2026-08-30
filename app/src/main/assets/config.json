@@ -36,5 +36,13 @@
   "use_map_match_fusion": false,
   "map_match_max_fuse_uncertainty_m": 15.0,
   "map_match_min_cross_track_sigma_m": 2.0,
-  "map_match_along_track_sigma_m": 10000.0
+  "map_match_along_track_sigma_m": 10000.0,
+  "ekf_initial_gyro_bias_dps": 0.3,
+  "ekf_gyro_bias_random_walk_dps_per_sqrt_s": 0.002,
+  "ekf_zupt_gyro_noise_dps": 0.5,
+  "max_yaw_rate_dps": 90.0,
+  "use_gnss_nis_gate": false,
+  "ekf_gnss_nis_gate": 9.21,
+  "ekf_max_consecutive_gnss_rejects": 5,
+  "gnss_max_implied_speed_mps": 60.0
 }

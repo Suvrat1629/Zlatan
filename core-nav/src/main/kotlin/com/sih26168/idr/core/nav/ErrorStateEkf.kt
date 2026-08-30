@@ -9,7 +9,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Error-state EKF over local-frame position and heading: state = [n, e, theta].
+ * Error-state EKF over local-frame position, heading and gyro bias: state = [n, e, theta, biasZ].
  *
  * Heading is a real state, not just an exogenous input: it's nudged by the tick-to-tick
  * CHANGE in the incoming headingDeg (wrap-aware), carries its own ARW-driven variance, and
@@ -24,20 +24,34 @@ class ErrorStateEkf(
 
     private val frame = LocalFrame(initial)
 
-    // State [n, e, theta]: metres, metres, radians.
+    // State [n, e, theta, biasZ]: metres, metres, radians, radians/second.
+    //
+    // biasZ is the yaw-rate bias (heading work plan F3). The incoming heading delta already
+    // contains it, so the true rotation is (dTheta - biasZ * dt). It is a state rather than a
+    // calibration constant because removing a fitted constant bought nothing offline -- the bias
+    // moves within a drive, largely with temperature, and a dashboard phone gets hot. It is
+    // observable two ways: through the theta-bias covariance whenever a trusted GNSS bearing
+    // arrives, and directly from a zero-velocity interval, where a stationary vehicle means any
+    // measured yaw rate IS bias.
     private var n = 0.0
     private var e = 0.0
     private var theta = 0.0
+    private var biasZ = 0.0
     private var thetaInitialised = false
     private var lastInputHeadingDeg = 0.0
 
-    // Symmetric 3x3 covariance, row-major.
-    private var p = Array(3) { i -> DoubleArray(3) { j -> if (i == j) initialVariance(i) else 0.0 } }
+    // Innovation gate bookkeeping.
+    private var lastNis = Double.NaN
+    private var rejectedFixes = 0L
+    private var consecutiveRejects = 0
 
-    private fun initialVariance(i: Int): Double {
-        val posVar = config.ekfInitialUncertaintyM.toDouble().let { it * it }
-        val thetaVar = Math.toRadians(30.0).let { it * it }
-        return if (i < 2) posVar else thetaVar
+    // Symmetric NxN covariance, row-major.
+    private var p = Array(N) { i -> DoubleArray(N) { j -> if (i == j) initialVariance(i) else 0.0 } }
+
+    private fun initialVariance(i: Int): Double = when (i) {
+        0, 1 -> config.ekfInitialUncertaintyM.toDouble().let { it * it }
+        2 -> Math.toRadians(30.0).let { it * it }
+        else -> Math.toRadians(config.ekfInitialGyroBiasDps.toDouble()).let { it * it }
     }
 
     override fun predict(
@@ -54,25 +68,46 @@ class ErrorStateEkf(
         }
         val rawDeltaDeg = ((headingDeg - lastInputHeadingDeg + 540.0).mod(360.0)) - 180.0
         lastInputHeadingDeg = headingDeg
-        val dTheta = Math.toRadians(rawDeltaDeg)
+        // The measured rotation carries the bias; the true rotation is what is left after
+        // removing the bias accumulated over this interval.
+        val dTheta = Math.toRadians(rawDeltaDeg) - biasZ * dtSeconds
 
         val c = cos(theta)
         val s = sin(theta)
         val v = speedMps.toDouble()
         val dt = dtSeconds
 
-        n += v * c * dt
-        e += v * s * dt
-        theta += dTheta
+        // Exact coordinated-turn arc, not a straight segment along one heading (heading work plan
+        // F2). Advancing along the start-of-interval heading and rotating afterwards turns LATE, so
+        // the path swings wide -- the observed overshoot into the next street. The error scales
+        // with turn rate, which is why it only shows on sharp turns. For constant v and omega the
+        // true path is a circular arc with a closed form; below ARC_MIN_DTHETA it degenerates to
+        // the straight-line form, which is also what avoids dividing by ~0.
+        val thetaEnd = theta + dTheta
+        if (kotlin.math.abs(dTheta) > ARC_MIN_DTHETA) {
+            val radius = v * dt / dTheta          // v / omega
+            n += radius * (sin(thetaEnd) - s)
+            e += radius * (c - cos(thetaEnd))
+        } else {
+            n += v * c * dt
+            e += v * s * dt
+        }
+        theta = thetaEnd
 
         val fNT = -v * s * dt
         val fET = v * c * dt
+        // d(theta)/d(bias) = -dt: an over-estimated bias subtracts too much rotation, which is
+        // exactly the coupling that lets a GNSS bearing correction flow back into the bias.
         val f = arrayOf(
-            doubleArrayOf(1.0, 0.0, fNT),
-            doubleArrayOf(0.0, 1.0, fET),
-            doubleArrayOf(0.0, 0.0, 1.0),
+            doubleArrayOf(1.0, 0.0, fNT, 0.0),
+            doubleArrayOf(0.0, 1.0, fET, 0.0),
+            doubleArrayOf(0.0, 0.0, 1.0, -dt),
+            doubleArrayOf(0.0, 0.0, 0.0, 1.0),
         )
 
+        // Jacobian kept in its straight-segment form: over one 100 ms tick the arc correction to
+        // F is second order in dTheta and does not measurably change the covariance, while the
+        // state update above genuinely does move the position.
         // sigmaTheta scales with sqrt(dt), not dt: heading error is an Angle Random Walk,
         // so its variance grows linearly with time.
         val sigmaV = (speedSigmaMps ?: config.ekfSpeedNoiseMps).toDouble()
@@ -80,10 +115,13 @@ class ErrorStateEkf(
         val qNNSpeed = (c * dt) * (c * dt) * sigmaV * sigmaV
         val qEESpeed = (s * dt) * (s * dt) * sigmaV * sigmaV
         val qNESpeed = (c * dt) * (s * dt) * sigmaV * sigmaV
+        // Bias random walk: variance grows linearly with time, so sigma scales with sqrt(dt).
+        val sigmaBias = Math.toRadians(config.ekfGyroBiasRandomWalkDpsPerSqrtSec.toDouble()) * sqrt(dt)
         val q = arrayOf(
-            doubleArrayOf(qNNSpeed, qNESpeed, 0.0),
-            doubleArrayOf(qNESpeed, qEESpeed, 0.0),
-            doubleArrayOf(0.0, 0.0, sigmaTheta * sigmaTheta),
+            doubleArrayOf(qNNSpeed, qNESpeed, 0.0, 0.0),
+            doubleArrayOf(qNESpeed, qEESpeed, 0.0, 0.0),
+            doubleArrayOf(0.0, 0.0, sigmaTheta * sigmaTheta, 0.0),
+            doubleArrayOf(0.0, 0.0, 0.0, sigmaBias * sigmaBias),
         )
 
         p = add(matMul(matMul(f, p), transpose(f)), q)
@@ -105,26 +143,59 @@ class ErrorStateEkf(
         val sEE = pEE + rVar
         val sNE = pNE
         val det = sNN * sEE - sNE * sNE
-        if (det < 1e-9) return
+        if (det < 1e-9) {
+            // A degenerate innovation covariance is a filter problem, not a fix problem. Returning
+            // silently here hid it; count it so it shows up in telemetry instead.
+            rejectedFixes++
+            return
+        }
 
         val invSNN = sEE / det
         val invSEE = sNN / det
         val invSNE = -sNE / det
 
+        // Innovation gate. NIS = y' S^-1 y, chi-square with 2 degrees of freedom for a 2D position
+        // measurement. A multipath fix arrives with a confident accuracy figure, so horizAccM alone
+        // cannot reject it -- but it disagrees with the filter's own prediction, and that is what
+        // this measures. The escape hatch matters as much as the gate: a diverged filter makes every
+        // honest fix look like an outlier, so after a run of rejections we accept and widen instead
+        // of locking GNSS out forever.
+        lastNis = yN * (invSNN * yN + invSNE * yE) + yE * (invSNE * yN + invSEE * yE)
+        if (config.useGnssNisGate &&
+            lastNis > config.ekfGnssNisGate &&
+            consecutiveRejects < config.ekfMaxConsecutiveGnssRejects
+        ) {
+            rejectedFixes++
+            consecutiveRejects++
+            return
+        }
+        if (config.useGnssNisGate && consecutiveRejects >= config.ekfMaxConsecutiveGnssRejects) {
+            // Trust the fix and admit the state is stale: inflate position variance so the update
+            // below can actually move it.
+            val inflate = config.ekfInitialUncertaintyM.toDouble().let { it * it }
+            p[0][0] += inflate; p[1][1] += inflate
+        }
+        consecutiveRejects = 0
+
         // K = P * H^T * S^-1, H selecting the n/e columns of P (GNSS observes position, not
         // heading directly — heading still gets corrected via the n/e-theta covariance).
+        val pBN = p[3][0]; val pBE = p[3][1]
+
         val kN0 = pNN * invSNN + pNE * invSNE; val kN1 = pNN * invSNE + pNE * invSEE
         val kE0 = pNE * invSNN + pEE * invSNE; val kE1 = pNE * invSNE + pEE * invSEE
         val kT0 = pNT * invSNN + pET * invSNE; val kT1 = pNT * invSNE + pET * invSEE
+        val kB0 = pBN * invSNN + pBE * invSNE; val kB1 = pBN * invSNE + pBE * invSEE
 
         n += kN0 * yN + kN1 * yE
         e += kE0 * yN + kE1 * yE
         theta += kT0 * yN + kT1 * yE
+        biasZ += kB0 * yN + kB1 * yE
 
         val imKH = arrayOf(
-            doubleArrayOf(1 - kN0, -kN1, 0.0),
-            doubleArrayOf(-kE0, 1 - kE1, 0.0),
-            doubleArrayOf(-kT0, -kT1, 1.0),
+            doubleArrayOf(1 - kN0, -kN1, 0.0, 0.0),
+            doubleArrayOf(-kE0, 1 - kE1, 0.0, 0.0),
+            doubleArrayOf(-kT0, -kT1, 1.0, 0.0),
+            doubleArrayOf(-kB0, -kB1, 0.0, 1.0),
         )
         p = matMul(imKH, p)
         symmetrize()
@@ -169,9 +240,9 @@ class ErrorStateEkf(
     private fun updateScalar(idx: Int, y: Double, r: Double) {
         val s = p[idx][idx] + r
         if (s < 1e-12) return
-        val k = DoubleArray(3) { i -> p[i][idx] / s }
-        n += k[0] * y; e += k[1] * y; theta += k[2] * y
-        val newP = Array(3) { i -> DoubleArray(3) { j -> p[i][j] - k[i] * p[idx][j] } }
+        val k = DoubleArray(N) { i -> p[i][idx] / s }
+        n += k[0] * y; e += k[1] * y; theta += k[2] * y; biasZ += k[3] * y
+        val newP = Array(N) { i -> DoubleArray(N) { j -> p[i][j] - k[i] * p[idx][j] } }
         p = newP
         symmetrize()
     }
@@ -180,21 +251,35 @@ class ErrorStateEkf(
      *  pre-computed innovation [y] and measurement noise [r]. Used for projected (rotated-axis)
      *  position measurements where H is not a single state selector. */
     private fun updateRow(hN: Double, hE: Double, hT: Double, y: Double, r: Double) {
-        val ph0 = p[0][0] * hN + p[0][1] * hE + p[0][2] * hT
-        val ph1 = p[1][0] * hN + p[1][1] * hE + p[1][2] * hT
-        val ph2 = p[2][0] * hN + p[2][1] * hE + p[2][2] * hT
-        val s = hN * ph0 + hE * ph1 + hT * ph2 + r
+        val h = doubleArrayOf(hN, hE, hT, 0.0)
+        val ph = DoubleArray(N) { i -> (0 until N).sumOf { j -> p[i][j] * h[j] } }
+        val s = (0 until N).sumOf { i -> h[i] * ph[i] } + r
         if (s < 1e-12) return
-        val k0 = ph0 / s; val k1 = ph1 / s; val k2 = ph2 / s
-        n += k0 * y; e += k1 * y; theta += k2 * y
-        val imKH = arrayOf(
-            doubleArrayOf(1 - k0 * hN, -k0 * hE, -k0 * hT),
-            doubleArrayOf(-k1 * hN, 1 - k1 * hE, -k1 * hT),
-            doubleArrayOf(-k2 * hN, -k2 * hE, 1 - k2 * hT),
-        )
+        val k = DoubleArray(N) { i -> ph[i] / s }
+        n += k[0] * y; e += k[1] * y; theta += k[2] * y; biasZ += k[3] * y
+        val imKH = Array(N) { i -> DoubleArray(N) { j -> (if (i == j) 1.0 else 0.0) - k[i] * h[j] } }
         p = matMul(imKH, p)
         symmetrize()
     }
+
+    /**
+     * Zero-velocity gyro observation (heading work plan F3). A stationary vehicle cannot be
+     * rotating, so whatever yaw rate the gyroscope reports IS the bias -- a direct measurement of
+     * the state, and the only one available during a GNSS blackout in stop-and-go traffic. This is
+     * why ZUPT is worth more than the speed reset it is usually built for.
+     */
+    override fun updateStationaryGyro(measuredYawRateRadS: Float) {
+        val r = Math.toRadians(config.ekfZuptGyroNoiseDps.toDouble()).let { it * it }
+        updateScalar(3, measuredYawRateRadS.toDouble() - biasZ, r)
+    }
+
+    /** Estimated yaw-rate bias, deg/s. Exposed for telemetry: whether it converges to a stable
+     *  value per device is the check that this state is doing its job rather than absorbing noise. */
+    override fun gyroBiasDps(): Double = Math.toDegrees(biasZ)
+
+    override fun lastGnssNis(): Double = lastNis
+
+    override fun gnssRejectedCount(): Long = rejectedFixes
 
     override fun estimate(): LatLon = frame.toLatLon(LocalEnu(n, e))
 
@@ -223,27 +308,34 @@ class ErrorStateEkf(
     fun positionCovarianceNE(): DoubleArray = doubleArrayOf(p[0][0], p[1][1], p[0][1])
 
     private fun symmetrize() {
-        for (i in 0..2) for (j in i + 1..2) {
+        for (i in 0 until N) for (j in i + 1 until N) {
             val avg = (p[i][j] + p[j][i]) / 2.0
             p[i][j] = avg; p[j][i] = avg
         }
     }
 
     companion object {
+        /** Below this per-tick rotation the arc and the straight segment agree to well under a
+         *  millimetre at road speed, and the v/omega division would be numerically pointless. */
+        private const val ARC_MIN_DTHETA = 1e-6
+
+        /** State dimension: [n, e, theta, biasZ]. */
+        const val N = 4
+
         private fun matMul(a: Array<DoubleArray>, b: Array<DoubleArray>): Array<DoubleArray> {
-            val r = Array(3) { DoubleArray(3) }
-            for (i in 0..2) for (j in 0..2) {
+            val r = Array(N) { DoubleArray(N) }
+            for (i in 0 until N) for (j in 0 until N) {
                 var sum = 0.0
-                for (k in 0..2) sum += a[i][k] * b[k][j]
+                for (k in 0 until N) sum += a[i][k] * b[k][j]
                 r[i][j] = sum
             }
             return r
         }
 
         private fun transpose(a: Array<DoubleArray>): Array<DoubleArray> =
-            Array(3) { i -> DoubleArray(3) { j -> a[j][i] } }
+            Array(N) { i -> DoubleArray(N) { j -> a[j][i] } }
 
         private fun add(a: Array<DoubleArray>, b: Array<DoubleArray>): Array<DoubleArray> =
-            Array(3) { i -> DoubleArray(3) { j -> a[i][j] + b[i][j] } }
+            Array(N) { i -> DoubleArray(N) { j -> a[i][j] + b[i][j] } }
     }
 }

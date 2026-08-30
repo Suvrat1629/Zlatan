@@ -38,6 +38,11 @@ class Diagnostics(
     private val inferenceMs = ArrayList<Double>()
     private val tickMs = ArrayList<Double>()
     private val imuGapsMs = ArrayList<Double>()
+    private val gyroBiasDps = ArrayList<Double>()
+    private val gnssNis = ArrayList<Double>()
+    private var onRoadTicks = 0L
+    private var matcherTicks = 0L
+    private var yawClampCount = 0L
     private val markers = ArrayList<TelemetryMarker>()
     private val outages = ArrayList<OutageRecord>()
     private val warnings = LinkedHashSet<String>()
@@ -97,6 +102,11 @@ class Diagnostics(
         latest = t
         if (t.tickMs.isFinite()) tickMs.add(t.tickMs.toDouble())
         if (t.inferenceMs.isFinite() && t.inferenceMs > 0f) inferenceMs.add(t.inferenceMs.toDouble())
+        if (t.gyroBiasDps.isFinite()) gyroBiasDps.add(t.gyroBiasDps.toDouble())
+        if (t.gnssNis.isFinite()) gnssNis.add(t.gnssNis.toDouble())
+        yawClampCount = t.yawClampCount
+        matcherTicks++
+        if (t.mapMatchOnRoad) onRoadTicks++
 
         // --- speed residual, only where GNSS speed is meaningful ---
         val vg = t.vGnssMps
@@ -185,7 +195,10 @@ class Diagnostics(
             append("sats=${t.satsInFix}/${t.irnssSatsInFix} ")
             append("rate=${fmt(imuRateHz())}Hz ")
             append("inf=${fmt(percentile(inferenceMs, 0.95))}ms ")
-            append("shake=$shakeEvents")
+            append("shake=$shakeEvents ")
+            append("bias=${fmt(t.gyroBiasDps)}dps ")
+            append("nis=${fmt(median(gnssNis))} ")
+            append("clamp=${t.yawClampCount}")
         }
     }
 
@@ -214,6 +227,14 @@ class Diagnostics(
         headingErrorP90Deg = percentile(headingErrors, 0.90),
         yawConsistencyMedian = median(yawConsistency),
         suspectedShakeEvents = shakeEvents,
+        gyroBiasFinalDps = gyroBiasDps.lastOrNull() ?: Double.NaN,
+        // Spread over the second half only: the first half includes convergence from the initial
+        // guess, which would make a perfectly healthy estimate look unstable.
+        gyroBiasStabilityDps = stdDev(gyroBiasDps.drop(gyroBiasDps.size / 2)),
+        gnssNisMedian = median(gnssNis),
+        gnssNisP90 = percentile(gnssNis, 0.90),
+        yawClampCount = yawClampCount,
+        mapMatchOnRoadPercent = if (matcherTicks > 0) 100.0 * onRoadTicks / matcherTicks else Double.NaN,
         outages = outages.toList(),
         markers = markers.toList(),
         warnings = warnings.toList(),
