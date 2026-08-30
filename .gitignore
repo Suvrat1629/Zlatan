@@ -11,3 +11,6 @@ captures/
 *.aab
 
 # real device/trip data — never commit recorded drives
+
+# Eclipse/IDE compiled output
+bin/
