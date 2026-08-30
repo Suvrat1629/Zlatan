@@ -23,6 +23,8 @@ object EngineConfigJson {
             roadHeadingGain = o.optDouble("road_heading_gain", d.roadHeadingGain),
             roadHeadingMaxDistM = o.optDouble("road_heading_max_dist_m", d.roadHeadingMaxDistM),
             roadHeadingMaxTurnRps = o.optDouble("road_heading_max_turn_rps", d.roadHeadingMaxTurnRps),
+            maxSpeedRiseMps2 = o.optDouble("max_speed_rise_mps2", d.maxSpeedRiseMps2.toDouble()).toFloat(),
+            maxSpeedDropMps2 = o.optDouble("max_speed_drop_mps2", d.maxSpeedDropMps2.toDouble()).toFloat(),
             gnssLostNoFixTimeoutMs = o.optLong("gnss_lost_no_fix_timeout_ms", d.gnssLostNoFixTimeoutMs),
             handoverSlewSeconds = o.optDouble("handover_slew_seconds", d.handoverSlewSeconds),
             outputRateHz = o.optDouble("output_rate_hz", d.outputRateHz),

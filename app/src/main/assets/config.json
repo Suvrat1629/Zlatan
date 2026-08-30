@@ -15,6 +15,8 @@
   "road_heading_gain": 0.08,
   "road_heading_max_dist_m": 15.0,
   "road_heading_max_turn_rps": 0.15,
+  "max_speed_rise_mps2": 4.0,
+  "max_speed_drop_mps2": 12.0,
   "gnss_lost_no_fix_timeout_ms": 3000,
   "handover_slew_seconds": 1.5,
   "output_rate_hz": 10.0,

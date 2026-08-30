@@ -82,6 +82,7 @@ class RealEngine(
     @Volatile private var blendSpeedMps = 0f
     private var blendLogCounter = 0
     @Volatile private var lastAnchorNanos = 0L
+    @Volatile private var lastPublishedSpeedMps = 0f
 
     // User-selected vehicle context (GUI). WALK damps published speed; CAR/BIKE unchanged.
     @Volatile private var vehicleMode: VehicleMode = VehicleMode.CAR
@@ -282,11 +283,22 @@ class RealEngine(
         val speedOut = if (vehicleMode == VehicleMode.WALK)
             (speedMps * config.walkingSpeedScale).coerceAtMost(config.walkingSpeedMaxMps)
         else speedMps
+
+        // Physical slew limit: a ground vehicle cannot gain more than ~4 m/s^2 or shed more
+        // than ~12 m/s^2. Without this, shaking the phone spikes the model to absurd speeds
+        // (field: 160 km/h while standing still). ZUPT's instant zero survives because a
+        // drop is allowed 12 m/s^2, reaching 0 from city speeds within a couple of ticks.
+        val dtF = dtSeconds.toFloat()
+        val slewed = speedOut.coerceIn(
+            lastPublishedSpeedMps - config.maxSpeedDropMps2 * dtF,
+            lastPublishedSpeedMps + config.maxSpeedRiseMps2 * dtF,
+        ).coerceAtLeast(0f)
+        lastPublishedSpeedMps = slewed
         headingEstimator.predict((turnRad / dtSeconds).toFloat(), dtSeconds)
         val headingDeg = headingEstimator.headingDeg()
 
-        val deadReckoned = deadReckoner.step(speedOut, headingDeg, dtSeconds)
-        fusionFilter.predict(deadReckoned, speedOut, headingDeg, dtSeconds)
+        val deadReckoned = deadReckoner.step(slewed, headingDeg, dtSeconds)
+        fusionFilter.predict(deadReckoned, slewed, headingDeg, dtSeconds)
         val fused = fusionFilter.estimate()
         val matched = mapMatcher.snap(fused)
         // Snap is DISPLAY-ONLY. Resetting the dead-reckoner to the matched point erased all
@@ -305,7 +317,7 @@ class RealEngine(
         val matchDist = mapMatcher.matchedDistanceM()
         if (roadBearing != null && matchDist != null &&
             matchDist <= config.roadHeadingMaxDistM &&
-            speedOut > 3f &&
+            slewed > 3f &&
             kotlin.math.abs(turnRad / dtSeconds) < config.roadHeadingMaxTurnRps
         ) {
             // Way direction is arbitrary: resolve the 180-degree ambiguity toward whichever
@@ -318,7 +330,7 @@ class RealEngine(
 
         val mode = modeArbiter.currentMode(tEndNanos)
         publish(
-            lat = matched.lat, lon = matched.lon, speedMps = speedOut, headingDeg = headingDeg.toFloat(),
+            lat = matched.lat, lon = matched.lon, speedMps = slewed, headingDeg = headingDeg.toFloat(),
             mode = mode, tEndNanos = tEndNanos, tickStartNanos = t0,
         )
 

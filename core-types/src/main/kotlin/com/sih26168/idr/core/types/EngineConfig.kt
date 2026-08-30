@@ -34,6 +34,11 @@ data class EngineConfig(
     val roadHeadingMaxDistM: Double = 15.0,
     val roadHeadingMaxTurnRps: Double = 0.15,
 
+    // Physical slew limits on the published speed: no ground vehicle gains more than
+    // ~4 m/s^2 or brakes harder than ~12 m/s^2. Kills sensor-shake speed spikes.
+    val maxSpeedRiseMps2: Float = 4.0f,
+    val maxSpeedDropMps2: Float = 12.0f,
+
     val gnssLostNoFixTimeoutMs: Long = 3_000,
     val handoverSlewSeconds: Double = 1.5,
 
