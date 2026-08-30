@@ -65,9 +65,16 @@ class RealEngine(
     @Volatile private var diagnostics: Diagnostics? = null
     @Volatile private var telemetryWriter: TelemetryWriter? = null
 
-    fun setTelemetry(diagnostics: Diagnostics?, writer: TelemetryWriter?) {
+    @Volatile private var tickListener: ((TelemetryTick) -> Unit)? = null
+
+    fun setTelemetry(
+        diagnostics: Diagnostics?,
+        writer: TelemetryWriter?,
+        tickListener: ((TelemetryTick) -> Unit)? = this.tickListener,
+    ) {
         this.diagnostics = diagnostics
         this.telemetryWriter = writer
+        this.tickListener = tickListener
     }
     // Heading must integrate EVERY gyro sample: point-sampling one z-rate per 100 ms tick
     // aliases fast turns (a 1-2 s 90-degree turn gets undercounted while a slow U-turn
@@ -338,7 +345,7 @@ class RealEngine(
             mode = mode, tEndNanos = tEndNanos, tickStartNanos = t0,
         )
 
-        if (diagnostics != null || telemetryWriter != null) {
+        if (diagnostics != null || telemetryWriter != null || tickListener != null) {
             val tick = TelemetryTick(
                 tNanos = tEndNanos,
                 vModelMps = vAbs,
@@ -364,6 +371,7 @@ class RealEngine(
             )
             diagnostics?.onTick(tick)
             telemetryWriter?.write(tick)
+            tickListener?.invoke(tick)
         }
     }
 

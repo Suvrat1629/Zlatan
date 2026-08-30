@@ -47,6 +47,8 @@ class EngineService : Service() {
     lateinit var telemetry: TelemetrySession
         private set
 
+    private val uploader = TelemetryUploader()
+
     /** Drives the once-a-second telemetry logcat line; cancelled in onDestroy. */
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -78,7 +80,7 @@ class EngineService : Service() {
             // so a stub engine would disable telemetry with no error and no data written.
             Log.e(TAG_TEL, "engine is not RealEngine — model failed to load, telemetry disabled")
         }
-        realEngine?.setTelemetry(telemetry.diagnostics, null)
+        realEngine?.setTelemetry(telemetry.diagnostics, null, uploader::onTick)
 
         createNotificationChannel()
         try {
@@ -130,6 +132,7 @@ class EngineService : Service() {
         // Write the summary even if Record was never stopped, so a killed session still
         // leaves behind the numbers it measured.
         telemetry.stopFileCapture()
+        uploader.close()
         recordingEngine.stop()
         super.onDestroy()
     }
