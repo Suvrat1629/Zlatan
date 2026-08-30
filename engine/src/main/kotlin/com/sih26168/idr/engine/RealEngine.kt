@@ -205,7 +205,18 @@ class RealEngine(
 
         val fix = pendingGnssFix.getAndSet(null)
         if (fix != null) {
-            headingEstimator.seedFromGnssCourse(fix.bearingDeg)
+            // Reseed the gyro heading estimator from GNSS course ONLY when the fusion filter
+            // does not track its own heading (PassthroughFusionFilter). When the EKF owns
+            // heading it corrects theta through its weighted bearing + position measurements in
+            // updateWithGnss below. Reseeding here would jump the headingDeg value the EKF's
+            // predict() reads as a tick-to-tick DELTA, so the whole (course - gyroHeading) gap
+            // gets applied to theta as if it were real rotation -- unweighted, double-counting
+            // the correction, and at low speed injecting the course noise that the EKF's own
+            // ekfMinBearingTrustSpeedMps gate exists to reject. The gyro estimator free-runs as
+            // a pure delta source; its absolute drift is irrelevant since only the delta is used.
+            if (fusionFilter.headingDeg() == null) {
+                headingEstimator.seedFromGnssCourse(fix.bearingDeg)
+            }
             fusionFilter.updateWithGnss(LatLon(fix.lat, fix.lon), fix.speedMps, fix.bearingDeg, fix.horizAccM, fix.bearingValid)
             // CRITICAL: also snap the dead-reckoner to the fix. Without this, the next
             // deadReckoner.step() continues from its own stale position and

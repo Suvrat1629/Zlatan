@@ -276,6 +276,45 @@ doc §11) — this 4.2 is a grounded stopgap, not the measured number. Also a be
 to A/B on a real drive: the EKF's uncertainty ellipse is now ~3x larger between fixes and it
 weights GNSS more heavily.
 
+**2026-08-30 — external PR review; three fixes landed, one decision recorded.**
+
+- **BLOCKER — `seedFromGnssCourse` was corrupting EKF heading (review finding 1).**
+  `RealEngine` called `headingEstimator.seedFromGnssCourse(fix.bearingDeg)` on every fix,
+  unconditionally. Harmless in the Passthrough era (heading wasn't a filter state); with the
+  EKF driving `theta` from the tick-to-tick delta of the incoming `headingDeg`, each fix jumped
+  that input by (course − gyroHeading) and `predict()` applied the whole gap to `theta` as
+  real rotation — unweighted, bypassing covariance, and then `updateWithGnss` corrected heading
+  *again*. Double-counted, once unweighted, and worse at low speed since it has no equivalent
+  of the `ekfMinBearingTrustSpeedMps` gate. This is the likely primary cause of the first
+  real-drive test wandering off-road (sideways drift from the start of a blackout, not just
+  accumulation). **Fix:** the reseed now only runs when `fusionFilter.headingDeg() == null`
+  (Passthrough); when the EKF owns heading it corrects `theta` through its own weighted
+  measurements and the gyro estimator free-runs as a pure delta source.
+- **`uncertaintyM()` is now the covariance ellipse's major axis** (largest eigenvalue of the
+  2x2 position block), not `sqrt((pNN+pEE)/2)` (review finding 4). Post-outage the covariance
+  is strongly anisotropic and the RMS understated the real uncertainty exactly when the UI
+  ellipse and the `MainActivity` drift % are read. Diagnostic `reported/actual` at matched ARW
+  went 1.09 → 1.54 (conservative, safe side).
+- **`bin/` build output removed from git** (24 stale duplicate `.kt` files) and `bin/`
+  gitignored (review finding 2).
+- **Gyro-z bias state — decision: NOT adding it now, recorded here (review finding 5).**
+  `[[filter-state-vector]]` proposed 5 states; this ships 3 (`n, e, theta`). Dropping the
+  speed scale-factor state is well justified — field data (`17-Screening-Eval-Baselines.md`)
+  shows signed speed bias ~0, so a scale state has nothing consistent to estimate. Dropping
+  gyro-z bias is *less* obviously right: heading is the measured dominant error, and an ARW
+  process-noise term models a random walk, not a persistent offset. But `15-Part-C` Finding 3
+  tried a **fitted constant** gyro bias offline and it moved the drift floor 18.5% → 18.5%
+  (nothing). A Kalman bias *state* differs from a fitted constant (it re-estimates online
+  against GNSS, tracks thermal drift, carries covariance), so that null result doesn't settle
+  it — but it does mean this isn't clearly the next win, and tuning its random-walk Q needs
+  the Allan-variance number we don't have. **Revisit once real device traces + Allan variance
+  exist**; not blocking.
+- Still owed from the review, not done here: innovation/NIS gating + degraded mode (finding 3,
+  separate workstream), telemetry fields for heading uncertainty / map-match gate outcome /
+  `onRoad` (finding 7), logging the silent `det`/`s` degenerate-covariance returns.
+
+Full JVM suite (51 tests) + `:app:compileDebugKotlin` + `:app:assembleDebug` green.
+
 ## 3b. Map matcher progress log
 
 **2026-08-30 — RoadGraph landed; HMM built on top (§3 steps 2-4, uncommitted).** Scoped per an

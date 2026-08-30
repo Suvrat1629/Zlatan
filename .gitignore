@@ -13,3 +13,6 @@ captures/
 # real device/trip data — never commit recorded drives
 /app/src/main/assets/engine.tflite
 /app/src/main/assets/engine_delta.tflite
+
+# Eclipse/BuildShip build output — never commit
+bin/

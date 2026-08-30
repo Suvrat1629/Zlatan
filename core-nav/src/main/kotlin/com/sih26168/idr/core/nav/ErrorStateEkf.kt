@@ -198,7 +198,20 @@ class ErrorStateEkf(
 
     override fun estimate(): LatLon = frame.toLatLon(LocalEnu(n, e))
 
-    override fun uncertaintyM(): Float = sqrt((p[0][0] + p[1][1]) / 2.0).toFloat()
+    /**
+     * 1-std along the covariance ellipse's MAJOR axis -- the largest eigenvalue of the 2x2
+     * position block, not the RMS of the two variances. After an outage the covariance is
+     * strongly anisotropic (large along-track, small cross-track once map-matched), and
+     * averaging the variances understates the real uncertainty exactly then -- which is when
+     * the UI ellipse and the drift readout are read.
+     */
+    override fun uncertaintyM(): Float {
+        val a = p[0][0]; val b = p[1][1]; val c = p[0][1]
+        val mean = (a + b) / 2.0
+        val halfDiff = (a - b) / 2.0
+        val lambdaMax = mean + sqrt(halfDiff * halfDiff + c * c)
+        return sqrt(lambdaMax.coerceAtLeast(0.0)).toFloat()
+    }
 
     override fun headingDeg(): Double = Math.toDegrees(theta).mod(360.0)
 
