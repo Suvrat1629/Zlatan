@@ -38,7 +38,8 @@
     <string name="calibration_last_calibrated_format">Last calibrated %s</string>
     <string name="calibration_never">Not calibrated yet</string>
     <string name="calibration_unsupported">This device doesn\'t have the sensors needed for compass calibration.</string>
-    <string name="mode_walk">Walk</string>
-    <string name="mode_bike">Bike</string>
-    <string name="mode_car">Car</string>
+    <string name="mode_walk">🚶 Walk</string>
+    <string name="mode_bike">🏍 Bike</string>
+    <string name="mode_car">🚗 Car</string>
+    <string name="trail_legend">🔵 GPS   🟠 Predicted</string>
 </resources>

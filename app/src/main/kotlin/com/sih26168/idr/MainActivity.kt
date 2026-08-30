@@ -32,6 +32,9 @@ import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.Mode
 import com.sih26168.idr.core.types.VehicleMode
 import com.google.android.material.button.MaterialButtonToggleGroup
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.RelativeSizeSpan
 import com.sih26168.idr.core.types.PositionState
 import com.sih26168.idr.map.MapRenderer
 import com.sih26168.idr.map.OsmdroidMapRenderer
@@ -214,7 +217,11 @@ class MainActivity : AppCompatActivity() {
                         }
                         modeBadgeCard.strokeColor =
                             ContextCompat.getColor(this@MainActivity, modeAccentColor(s.mode))
-                        speedText.text = getString(R.string.speed_format, s.speedMps * 3.6f)
+                        // Hero speed: large numerals, small unit — glanceable at arm's length
+                        val kmh = (s.speedMps * 3.6f).toInt().toString()
+                        val sp = SpannableString("$kmh km/h")
+                        sp.setSpan(RelativeSizeSpan(0.45f), kmh.length, sp.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        speedText.text = sp
                         service?.updateNotification(s.mode)
                     }
                 }

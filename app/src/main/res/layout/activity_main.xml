@@ -144,40 +144,32 @@
         app:layout_constraintTop_toBottomOf="@id/speed_card"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Vehicle mode selector (Walk damps model speed; Bike/Car use full weights) -->
-    <com.google.android.material.button.MaterialButtonToggleGroup
-        android:id="@+id/vehicle_mode_group"
+    <!-- Trail legend: blue = GNSS-tracked, amber = predicted (dead reckoning) -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/legend_card"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"
-        app:singleSelection="true"
-        app:selectionRequired="true"
-        app:checkedButton="@id/mode_car"
+        android:layout_marginStart="@dimen/spacing_medium"
+        android:layout_marginBottom="@dimen/spacing_small"
+        app:cardBackgroundColor="@color/hud_scrim"
+        app:cardCornerRadius="@dimen/hud_corner_radius"
+        app:cardElevation="@dimen/hud_elevation"
         app:layout_constraintBottom_toTopOf="@id/action_bar"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintStart_toStartOf="parent">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/mode_walk"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+        <TextView
+            android:id="@+id/legend_text"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/mode_walk" />
+            android:paddingStart="@dimen/hud_padding_h"
+            android:paddingEnd="@dimen/hud_padding_h"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:textColor="@color/hud_on_scrim_variant"
+            android:textAppearance="?attr/textAppearanceLabelMedium"
+            android:text="@string/trail_legend" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/mode_bike"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/mode_bike" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/mode_car"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/mode_car" />
-    </com.google.android.material.button.MaterialButtonToggleGroup>
+    </com.google.android.material.card.MaterialCardView>
 
     <!-- ===================== Bottom action bar ===================== -->
 
@@ -196,12 +188,57 @@
             android:id="@+id/action_bar_content"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:baselineAligned="false"
+            android:orientation="vertical"
             android:paddingStart="@dimen/spacing_small"
             android:paddingEnd="@dimen/spacing_small"
             android:paddingTop="@dimen/spacing_small"
             android:paddingBottom="@dimen/spacing_small">
+
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/vehicle_mode_group"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="@dimen/spacing_small"
+                app:singleSelection="true"
+                app:selectionRequired="true"
+                app:checkedButton="@id/mode_car">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/mode_walk"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="@string/mode_walk" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/mode_bike"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="@string/mode_bike" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/mode_car"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="@string/mode_car" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:baselineAligned="false">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/mute_toggle"
@@ -248,6 +285,8 @@
                 app:icon="@drawable/ic_record"
                 app:iconGravity="top"
                 app:iconSize="20dp" />
+
+            </LinearLayout>
 
         </LinearLayout>
 
