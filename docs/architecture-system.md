@@ -140,12 +140,15 @@ better. See section 16, decision 1.
 - Recovers from the phone being picked up, re-seated or knocked mid-drive.
 - **No calibration ritual.** A delivery rider will not perform a figure-of-eight before starting.
   Auto-alignment or the product is dead on arrival.
-  - Deliberate, scoped exception: an optional compass (magnetometer) calibration screen exists,
-    reached from a button on the map — never on the startup path, never blocking a trip. It's a
-    figure-8, opted into, not required to start driving; §3.3 forbids gating a trip on one, not
-    offering one. See `MagnetometerCalibrator` / `MagnetometerCalibrationActivity` in `:core-nav`
-    / `:app`. The persisted correction isn't wired into heading fusion yet (still
-    `PassthroughFusionFilter`) — this is the input a future EKF-based fusion step will consume.
+  - Deliberate, scoped exception: an optional compass (magnetometer) screen exists, reached from
+    a button on the map — never on the startup path, never blocking a trip. §3.3 forbids gating
+    a trip on a calibration ritual, not offering one. See `MagnetometerCalibrationActivity` in
+    `:app`. An earlier version computed its own hard/soft-iron correction (see git history) —
+    dropped after real-device testing showed it was correct but impractical for a person to
+    actually finish by hand. It now just surfaces the vendor's own continuous calibration via
+    `TYPE_MAGNETIC_FIELD` + `onAccuracyChanged`, the same signal every nav app already relies on.
+    Nothing is persisted for fusion to consume; a future EKF-based fusion step (still
+    `PassthroughFusionFilter` today) would read the magnetic field + its accuracy directly.
 - Degrades gracefully *and says so* — visible uncertainty beats a confident wrong dot.
 - Location never leaves the device by default.
 

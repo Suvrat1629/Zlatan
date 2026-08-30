@@ -11,26 +11,33 @@ import android.view.View
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.progressindicator.LinearProgressIndicator
-import com.sih26168.idr.core.nav.MagnetometerCalibrator
-import kotlin.math.sqrt
 
 /**
- * User-facing magnetometer hard/soft-iron calibration (figure-8 motion). Deliberately
- * self-contained: its own SensorEventListener, not routed through SensorSource/
- * PositioningEngine — the magnetometer isn't a model input (docs/model-app-integration-
- * answers.md), and this shouldn't add any risk to the tuned DR/GNSS pipeline. The persisted
- * correction is what a future heading-fusion step (once FusionFilter is a real EKF, not
- * PassthroughFusionFilter) will consume — this screen doesn't wire it in yet.
+ * Compass "calibration" screen — really a confirmation screen for the vendor's own continuous
+ * hard-iron calibration, not a correction we compute ourselves.
+ *
+ * Every Android device keeps calibrating its magnetometer in the background whenever the
+ * sensor is active; `TYPE_MAGNETIC_FIELD` is that already-corrected reading, and
+ * `onAccuracyChanged` reports the vendor's own confidence in it
+ * (UNRELIABLE/LOW/MEDIUM/HIGH) — the same signal every nav app already relies on for the
+ * "move your phone in a figure-8" prompt. This screen just surfaces that signal with a live
+ * heading, instead of reinventing hard/soft-iron math and asking the user to clear
+ * self-invented thresholds by hand (an earlier version of this screen did exactly that; it
+ * was correct but impractical to actually finish — see git history).
+ *
+ * Deliberately self-contained: its own SensorEventListener, not routed through SensorSource/
+ * PositioningEngine — the magnetometer isn't a model input, and this shouldn't add any risk
+ * to the tuned DR/GNSS pipeline. Nothing here is persisted for a future fusion step to
+ * consume, since there's no correction of ours to persist — a future heading-fusion step
+ * would read TYPE_MAGNETIC_FIELD + its accuracy directly, the same way this screen does.
  */
 class MagnetometerCalibrationActivity : AppCompatActivity() {
 
     private lateinit var sensorManager: SensorManager
     private var magnetometer: Sensor? = null
     private var gravitySensor: Sensor? = null
-
-    private val calibrator = MagnetometerCalibrator()
     private lateinit var store: MagnetometerCalibrationStore
 
     private val gravityValues = FloatArray(3)
@@ -38,15 +45,12 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
     private val rotationMatrix = FloatArray(9)
     private val orientationValues = FloatArray(3)
     private var lastUiUpdateRealtimeMs = 0L
+    private var currentAccuracy = SensorManager.SENSOR_STATUS_UNRELIABLE
 
     private lateinit var headingText: TextView
     private lateinit var headingCardinalText: TextView
-    private lateinit var coverageProgress: LinearProgressIndicator
-    private lateinit var coverageCheck: ImageView
-    private lateinit var consistencyProgress: LinearProgressIndicator
-    private lateinit var consistencyCheck: ImageView
-    private lateinit var fieldValueText: TextView
-    private lateinit var fieldCheck: ImageView
+    private lateinit var accuracyValueText: TextView
+    private lateinit var accuracyCheck: ImageView
     private lateinit var statusText: TextView
     private lateinit var finishButton: MaterialButton
     private lateinit var lastCalibratedText: TextView
@@ -60,25 +64,29 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
                     System.arraycopy(event.values, 0, gravityValues, 0, 3)
                     hasGravity = true
                 }
-                Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED, Sensor.TYPE_MAGNETIC_FIELD -> {
-                    // Uncalibrated carries [raw_x,y,z, bias_x,y,z] — only the first 3 are the
-                    // actual field reading; we deliberately never touch the vendor's own bias
-                    // estimate (see class doc / MagnetometerCalibrator doc).
-                    // Every sample still feeds the fit at full sensor rate — only the (much
-                    // more expensive, and only human-visible) UI refresh below is throttled.
-                    calibrator.addSample(event.values[0], event.values[1], event.values[2])
-
+                Sensor.TYPE_MAGNETIC_FIELD -> {
+                    // Read accuracy off the event itself, not just onAccuracyChanged below —
+                    // that callback only fires on a *change*, and on a HAL that never calls it
+                    // (some vendors don't), currentAccuracy would stay stuck at its initial
+                    // UNRELIABLE forever with no way to tell that apart from a genuinely bad
+                    // reading. event.accuracy is populated on every single event regardless.
+                    currentAccuracy = event.accuracy
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastUiUpdateRealtimeMs >= UI_REFRESH_PERIOD_MS) {
                         lastUiUpdateRealtimeMs = now
                         updateHeading(event.values[0], event.values[1], event.values[2])
-                        updateQualityUi()
+                        updateAccuracyUi()
                     }
                 }
             }
         }
 
-        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+            if (sensor?.type == Sensor.TYPE_MAGNETIC_FIELD) {
+                currentAccuracy = accuracy
+                updateAccuracyUi()
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,12 +97,8 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
         findViewById<View>(R.id.close_button).setOnClickListener { finish() }
         headingText = findViewById(R.id.heading_text)
         headingCardinalText = findViewById(R.id.heading_cardinal_text)
-        coverageProgress = findViewById(R.id.coverage_progress)
-        coverageCheck = findViewById(R.id.coverage_check)
-        consistencyProgress = findViewById(R.id.consistency_progress)
-        consistencyCheck = findViewById(R.id.consistency_check)
-        fieldValueText = findViewById(R.id.field_value_text)
-        fieldCheck = findViewById(R.id.field_check)
+        accuracyValueText = findViewById(R.id.accuracy_value_text)
+        accuracyCheck = findViewById(R.id.accuracy_check)
         statusText = findViewById(R.id.status_text)
         finishButton = findViewById(R.id.finish_button)
         lastCalibratedText = findViewById(R.id.last_calibrated_text)
@@ -103,18 +107,7 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         gravitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY)
-        magnetometer = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED)
-        if (magnetometer == null) {
-            // Some devices only expose the calibrated variant. Its vendor-side hard-iron
-            // estimate drifts under us (see MagnetometerCalibrator's doc), so this is a worse
-            // fallback, but still better than refusing the feature outright.
-            System.err.println(
-                "[MagnetometerCalibrationActivity] no TYPE_MAGNETIC_FIELD_UNCALIBRATED on this " +
-                    "device — falling back to TYPE_MAGNETIC_FIELD, which fights the vendor's own " +
-                    "drifting bias estimate."
-            )
-            magnetometer = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
-        }
+        magnetometer = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
 
         if (magnetometer == null || gravitySensor == null) {
             showUnsupported()
@@ -122,7 +115,8 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
         }
 
         showLastCalibrated()
-        finishButton.setOnClickListener { saveAndFinish() }
+        updateAccuracyUi()
+        finishButton.setOnClickListener { confirmAndFinish() }
     }
 
     private fun showUnsupported() {
@@ -136,13 +130,11 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
     }
 
     private fun showLastCalibrated() {
-        val existing = store.load()
-        lastCalibratedText.text = if (existing != null) {
+        val confirmedAt = store.lastConfirmedAtEpochMs()
+        lastCalibratedText.text = if (confirmedAt != null) {
             getString(
                 R.string.calibration_last_calibrated_format,
-                DateUtils.getRelativeTimeSpanString(
-                    existing.calibratedAtEpochMs, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS,
-                ),
+                DateUtils.getRelativeTimeSpanString(confirmedAt, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS),
             )
         } else {
             getString(R.string.calibration_never)
@@ -153,10 +145,8 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
         super.onResume()
         val mag = magnetometer ?: return
         val gravity = gravitySensor ?: return
-        // maxReportLatencyUs=0 explicitly: the 3-arg overload leaves batching up to the
-        // vendor's sensor hub, and on this Vivo hardware that meant samples queued in a FIFO
-        // and arrived in one bursty flush instead of streaming — see SensorSource.kt, which
-        // hit the same thing and already disables it this way for the model's IMU feed.
+        // maxReportLatencyUs=0: disable batching so readings stream rather than arrive in
+        // rare bursts — see SensorSource.kt, which hit and fixed the same thing.
         val samplingPeriodUs = SensorManager.SENSOR_DELAY_GAME
         sensorManager.registerListener(sensorListener, mag, samplingPeriodUs, 0)
         sensorManager.registerListener(sensorListener, gravity, samplingPeriodUs, 0)
@@ -167,17 +157,9 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
         sensorManager.unregisterListener(sensorListener)
     }
 
-    private fun updateHeading(rawX: Float, rawY: Float, rawZ: Float) {
+    private fun updateHeading(magX: Float, magY: Float, magZ: Float) {
         if (!hasGravity) return
-        // calibrate() normalizes each axis to their mean RMS (magnitude ~ field/√3, since a
-        // sphere's variance splits three ways across axes — see MagnetometerCalibrator's doc
-        // on fieldMagnitudeUt), not the actual field strength. getRotationMatrix wants a real
-        // geomagnetic-vector-shaped input, so scale back up before handing it over.
-        val calibrated = calibrator.calibrate(rawX, rawY, rawZ)
-        val physicalScale = sqrt(3.0).toFloat()
-        val geomagnetic = floatArrayOf(
-            calibrated[0] * physicalScale, calibrated[1] * physicalScale, calibrated[2] * physicalScale,
-        )
+        val geomagnetic = floatArrayOf(magX, magY, magZ)
         val success = SensorManager.getRotationMatrix(rotationMatrix, null, gravityValues, geomagnetic)
         if (!success) {
             // Happens when gravity and the magnetic vector are near-parallel — the phone
@@ -201,31 +183,30 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
         return labels[index]
     }
 
-    private fun updateQualityUi() {
-        coverageProgress.setProgressCompat((calibrator.coverageFraction * 100).toInt(), true)
-        coverageCheck.visibility = if (calibrator.isCoverageGoodEnough) View.VISIBLE else View.INVISIBLE
-
-        consistencyProgress.setProgressCompat((calibrator.consistencyProgressFraction * 100).toInt(), true)
-        consistencyCheck.visibility = if (calibrator.isConsistencyGoodEnough) View.VISIBLE else View.INVISIBLE
-
-        val field = calibrator.fieldMagnitudeUt
-        fieldValueText.text = if (field.isNaN()) "—" else getString(R.string.calibration_field_value_format, field)
-        fieldCheck.visibility = if (calibrator.isFieldStrengthPlausible) View.VISIBLE else View.INVISIBLE
-
-        val ready = calibrator.isGoodEnough
-        finishButton.isEnabled = ready
-        statusText.text = getString(
-            when {
-                ready -> R.string.calibration_status_ready
-                !calibrator.isCoverageGoodEnough -> R.string.calibration_status_low_coverage
-                !calibrator.isFieldStrengthPlausible -> R.string.calibration_status_weak_field
-                else -> R.string.calibration_status_noisy
+    private fun updateAccuracyUi() {
+        val ready = currentAccuracy == SensorManager.SENSOR_STATUS_ACCURACY_HIGH
+        accuracyValueText.text = getString(
+            when (currentAccuracy) {
+                SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> R.string.calibration_accuracy_high
+                SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> R.string.calibration_accuracy_medium
+                SensorManager.SENSOR_STATUS_ACCURACY_LOW -> R.string.calibration_accuracy_low
+                else -> R.string.calibration_accuracy_unreliable
             }
         )
+        accuracyValueText.setTextColor(
+            ContextCompat.getColor(this, if (ready) R.color.idr_navic else R.color.idr_dead_reckoning)
+        )
+        accuracyCheck.visibility = if (ready) View.VISIBLE else View.INVISIBLE
+        finishButton.isEnabled = ready
+        statusText.text = getString(
+            if (ready) R.string.calibration_status_ready else R.string.calibration_status_needs_motion
+        )
+        // Otherwise it keeps telling the user to rotate even after they're done.
+        figureEightView.visibility = if (ready) View.INVISIBLE else View.VISIBLE
     }
 
-    private fun saveAndFinish() {
-        store.save(calibrator.hardIronOffset, calibrator.softIronScale, calibrator.fieldMagnitudeUt)
+    private fun confirmAndFinish() {
+        store.recordConfirmed()
         android.widget.Toast.makeText(this, R.string.calibration_saved_toast, android.widget.Toast.LENGTH_SHORT).show()
         finish()
     }
