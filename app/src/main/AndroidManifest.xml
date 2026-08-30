@@ -18,7 +18,8 @@
     <!-- Only the map tile layer needs this (F4-dependent); the engine itself needs zero
          network (docs/App-Stack-and-Integration-Decisions.md §5). -->
     <uses-permission android:name="android.permission.INTERNET" />
-
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    android:maxSdkVersion="28" />
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
