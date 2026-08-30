@@ -140,6 +140,12 @@ better. See section 16, decision 1.
 - Recovers from the phone being picked up, re-seated or knocked mid-drive.
 - **No calibration ritual.** A delivery rider will not perform a figure-of-eight before starting.
   Auto-alignment or the product is dead on arrival.
+  - Deliberate, scoped exception: an optional compass (magnetometer) calibration screen exists,
+    reached from a button on the map — never on the startup path, never blocking a trip. It's a
+    figure-8, opted into, not required to start driving; §3.3 forbids gating a trip on one, not
+    offering one. See `MagnetometerCalibrator` / `MagnetometerCalibrationActivity` in `:core-nav`
+    / `:app`. The persisted correction isn't wired into heading fusion yet (still
+    `PassthroughFusionFilter`) — this is the input a future EKF-based fusion step will consume.
 - Degrades gracefully *and says so* — visible uncertainty beats a confident wrong dot.
 - Location never leaves the device by default.
 
