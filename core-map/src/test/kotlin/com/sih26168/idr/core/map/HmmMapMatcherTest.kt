@@ -78,6 +78,80 @@ class HmmMapMatcherTest {
     }
 
     @Test
+    fun onRoadResultCarriesTheSegmentBearingAsAnAxis() {
+        val graph = parallelRoadsGraph() // roads run due north
+        val hmm = HmmMapMatcher(graph, maxSnapM = 35.0, minAdvanceDisplacementM = 1.0)
+        hmm.snap(at(20.0, 0.0))
+        val r = hmm.snap(at(40.0, 0.0))
+        assertTrue(r.onRoad)
+        val bearing = r.roadBearingDeg!!
+        // North-south road: the axis is 0 or 180, either is correct (roads are undirected).
+        val axis = ((bearing % 180.0) + 180.0) % 180.0
+        assertTrue(axis < 2.0 || axis > 178.0, "N-S road should report a ~0/180 axis, got $bearing")
+    }
+
+    @Test
+    fun hmmStillDiscriminatesParallelRoadsTighterThanTheDisplacementGate() {
+        // The advisor flagged that the default minAdvanceDisplacementM (8 m) equals this
+        // fixture's road spacing (8 m) -- a suspicious coincidence. Indian service roads sit
+        // closer. Rebuild the fixture at 4 m spacing and confirm the route-consistency check
+        // still keeps the HMM on the correct road, at gate values both below and above 4 m.
+        fun graphAt(spacingM: Double): RoadGraph {
+            val roadA = way(0.0 to 0.0, 200.0 to 0.0)
+            val roadB = way(0.0 to spacingM, 200.0 to spacingM)
+            val crossNear = way(0.0 to 0.0, 0.0 to spacingM)
+            val crossFar = way(200.0 to 0.0, 200.0 to spacingM)
+            return RoadGraph.fromWays(listOf(roadA, roadB, crossNear, crossFar))
+        }
+        for (gate in listOf(2.0, 8.0, 16.0)) {
+            val hmm = HmmMapMatcher(graphAt(4.0), maxSnapM = 35.0, minAdvanceDisplacementM = gate)
+            hmm.snap(at(20.0, 0.0))
+            hmm.snap(at(40.0, 0.0))
+            hmm.snap(at(60.0, 0.0))                       // firmly established on A
+            val noisy = hmm.snap(at(80.0, 3.9))           // 0.1 m from B, 3.9 m from A
+            val distToA = Geo.distanceM(noisy.position, at(80.0, 0.0))
+            val distToB = Geo.distanceM(noisy.position, at(80.0, 4.0))
+            assertTrue(
+                distToA < distToB,
+                "gate=$gate m: HMM should stay on road A despite B being pointwise closer",
+            )
+        }
+    }
+
+    @Test
+    fun hmmFollowsAGenuineTurnOntoTheCrossStreet() {
+        // The opposite failure mode from the tests above: not "stay put under noise" but
+        // "actually switch when the vehicle turns off". This is the case commit 471520c's
+        // reckoner-snap broke, and the one that gates useMapMatchFusion being flipped on --
+        // if the route-consistency term is too sticky to let a real turn through, the fused
+        // path would fight the turn.
+        val graph = parallelRoadsGraph() // road A (0,0)->(200,0) ; crossFar (200,0)->(200,8)
+        val hmm = HmmMapMatcher(graph, maxSnapM = 35.0, minAdvanceDisplacementM = 2.0)
+
+        hmm.snap(at(150.0, 0.0))
+        hmm.snap(at(180.0, 0.0))
+        hmm.snap(at(198.0, 0.0))         // approaching the far junction on A
+        hmm.snap(at(200.0, 2.0))         // turned east onto crossFar
+        val mid = hmm.snap(at(200.0, 4.0))
+        val end = hmm.snap(at(200.0, 6.5))
+
+        // crossFar runs east-west; a match that followed the turn sits on it (north ~200),
+        // not stuck back at the junction on road A.
+        for (r in listOf(mid, end)) {
+            assertTrue(r.onRoad)
+            val axis = ((r.roadBearingDeg!! % 180.0) + 180.0) % 180.0
+            assertTrue(
+                axis in 88.0..92.0,
+                "after turning east the match should be on the east-west cross street, got bearing ${r.roadBearingDeg}",
+            )
+        }
+        assertTrue(
+            Geo.distanceM(end.position, at(200.0, 6.5)) < 3.0,
+            "should be tracking the vehicle along the cross street, not lagging at the junction",
+        )
+    }
+
+    @Test
     fun offRoadPositionReturnsHonestUncertainty() {
         val graph = parallelRoadsGraph()
         val hmm = HmmMapMatcher(graph, maxSnapM = 35.0)
@@ -85,6 +159,24 @@ class HmmMapMatcherTest {
         val result = hmm.snap(farAway)
         assertTrue(!result.onRoad)
         assertTrue(result.uncertaintyM >= NoOpMapMatcher.NO_MAP_UNCERTAINTY_M)
+    }
+
+    @Test
+    fun uncertaintyGrowsWithDistanceFromTheRoadNotJustHypothesisSpread() {
+        // A match can be unambiguous (one clear road) yet far off it -- uncertaintyM must
+        // reflect that, or mapMatchMaxFuseUncertaintyM can't gate it. Compare a near-road
+        // fix with one 20 m off, both on the same graph.
+        val graph = parallelRoadsGraph()
+        val near = HmmMapMatcher(graph, maxSnapM = 35.0, minAdvanceDisplacementM = 1.0)
+        near.snap(at(20.0, 0.0)); near.snap(at(40.0, 0.0))
+        val onRoad = near.snap(at(60.0, 0.5))
+
+        val far = HmmMapMatcher(graph, maxSnapM = 35.0, minAdvanceDisplacementM = 1.0)
+        far.snap(at(20.0, 0.0)); far.snap(at(40.0, 0.0))
+        val wayOff = far.snap(at(60.0, 20.0)) // 20 m east of road A, 12 m east of road B
+
+        assertTrue(wayOff.uncertaintyM > onRoad.uncertaintyM + 8f,
+            "20 m off the road should report much higher uncertainty (off=${wayOff.uncertaintyM}, on=${onRoad.uncertaintyM})")
     }
 
     @Test

@@ -7,14 +7,22 @@ import com.sih26168.idr.core.types.LatLon
  * (metres, 1-std proxy) and whether [rawPosition] actually had a nearby road to snap to at
  * all -- covariance/confidence instead of a bare `LatLon` (plan2.md §3 step 4).
  *
- * Still display-only (plan2.md §3 step 6, not done): `RealEngine` publishes [position] to the
- * UI but does not feed it back into the fusion filter or reset the dead reckoner to it -- see
- * the comment at `RealEngine.tickOnce()` for why that reset was tried and reverted.
+ * [roadBearingDeg] is the geographic bearing (0 = north, clockwise) of the matched road at
+ * [position], or null when there is no segment (off-road / no map). A fusion filter uses it to
+ * apply the match *anisotropically* -- tight across the road, effectively free along it --
+ * because map matching constrains cross-track error well and along-track barely at all
+ * (architecture doc §4). Direction along the segment is arbitrary; only the axis matters.
+ *
+ * Whether `RealEngine` feeds this back into the fusion filter is gated by
+ * `EngineConfig.useMapMatchFusion` (plan2.md §3 step 6); default off, display-only, unchanged
+ * from before -- see the comment at `RealEngine.tickOnce()` for why the earlier
+ * reset-the-reckoner-to-the-match approach was reverted.
  */
 data class MapMatchResult(
     val position: LatLon,
     val uncertaintyM: Float,
     val onRoad: Boolean,
+    val roadBearingDeg: Double? = null,
 )
 
 interface MapMatcher {
@@ -28,6 +36,15 @@ interface MapMatcher {
 
     /** Perpendicular distance (m) of the last snap, or null when off-network. */
     fun matchedDistanceM(): Double? = null
+    /**
+     * Whether this matcher's [MapMatchResult.uncertaintyM] is a real positional covariance
+     * safe to fold into the fusion filter as a measurement (plan2.md §3 step 6). Only the
+     * multi-hypothesis HMM qualifies: a greedy nearest-segment snapper has no protection
+     * against locking onto a parallel road, and feeding that in as a tight cross-track
+     * measurement is strictly worse than leaving it display-only. `RealEngine` refuses
+     * `useMapMatchFusion` unless this is true.
+     */
+    val emitsFusableCovariance: Boolean get() = false
 }
 
 class NoOpMapMatcher : MapMatcher {
