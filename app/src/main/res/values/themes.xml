@@ -25,4 +25,13 @@
              day/night-correct one. A fixed white here flashed on dark-mode launch. -->
     </style>
 
+    <!-- Bottom action sheet: rounded top corners only. -->
+    <style name="ShapeAppearance.Idr.ActionBar" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSizeTopLeft">@dimen/action_bar_corner</item>
+        <item name="cornerSizeTopRight">@dimen/action_bar_corner</item>
+        <item name="cornerSizeBottomLeft">0dp</item>
+        <item name="cornerSizeBottomRight">0dp</item>
+    </style>
+
 </resources>

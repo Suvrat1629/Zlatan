@@ -19,11 +19,10 @@
         app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- ===================== HUD chips (over the map) =====================
-         These keep a fixed high-contrast scrim + white text on purpose:
-         ?attr/colorSurface would vanish over a matching map tile.
-         See .claude/skills/idr-android-ui §5. -->
+         Fixed high-contrast scrim + white text on purpose: ?attr/colorSurface
+         would vanish over a matching map tile. See .claude/skills/idr-android-ui §5. -->
 
-    <!-- Card stroke colour is set per Mode in MainActivity (idr-android-ui §4). -->
+    <!-- mode_dot's tint is set per Mode in MainActivity (idr-android-ui §4). -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/mode_badge_card"
         android:layout_width="wrap_content"
@@ -34,28 +33,40 @@
         app:cardBackgroundColor="@color/hud_scrim"
         app:cardCornerRadius="@dimen/hud_corner_radius"
         app:cardElevation="@dimen/hud_elevation"
-        app:strokeWidth="2dp"
-        app:strokeColor="@color/idr_dead_reckoning"
         app:layout_constrainedWidth="true"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/speed_card"
         app:layout_constraintHorizontal_bias="0">
 
-        <TextView
-            android:id="@+id/mode_badge"
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:orientation="horizontal"
             android:gravity="center_vertical"
             android:paddingStart="@dimen/hud_padding_h"
             android:paddingEnd="@dimen/hud_padding_h"
             android:paddingTop="@dimen/hud_padding_v"
-            android:paddingBottom="@dimen/hud_padding_v"
-            android:textColor="@color/hud_on_scrim"
-            android:textAppearance="?attr/textAppearanceTitleMedium"
-            android:textStyle="bold"
-            android:text="@string/mode_init"
-            tools:text="GPS lost — still tracking you  0 sats" />
+            android:paddingBottom="@dimen/hud_padding_v">
+
+            <View
+                android:id="@+id/mode_dot"
+                android:layout_width="@dimen/hud_dot_size"
+                android:layout_height="@dimen/hud_dot_size"
+                android:layout_marginEnd="7dp"
+                android:background="@drawable/mode_dot"
+                android:backgroundTint="@color/idr_mode_init" />
+
+            <TextView
+                android:id="@+id/mode_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/hud_on_scrim"
+                android:textAppearance="?attr/textAppearanceLabelLarge"
+                android:text="@string/mode_init"
+                tools:text="GPS lost — still tracking you" />
+
+        </LinearLayout>
 
     </com.google.android.material.card.MaterialCardView>
 
@@ -64,7 +75,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginStart="@dimen/spacing_medium"
-        android:layout_marginTop="@dimen/spacing_small"
+        android:layout_marginTop="6dp"
         android:visibility="gone"
         app:cardBackgroundColor="@color/hud_scrim"
         app:cardCornerRadius="@dimen/hud_corner_radius"
@@ -82,8 +93,8 @@
             android:paddingTop="@dimen/hud_padding_v"
             android:paddingBottom="@dimen/hud_padding_v"
             android:textColor="@color/hud_on_scrim_variant"
-            android:textAppearance="?attr/textAppearanceBodyMedium"
-            tools:text="Drift: ~0.0% (374m since GPS lost)" />
+            android:textAppearance="?attr/textAppearanceLabelMedium"
+            tools:text="Drift ~0.0% · 374 m since GPS lost" />
 
     </com.google.android.material.card.MaterialCardView>
 
@@ -91,28 +102,47 @@
         android:id="@+id/speed_card"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_margin="@dimen/spacing_medium"
+        android:layout_marginTop="@dimen/spacing_medium"
+        android:layout_marginEnd="@dimen/spacing_medium"
         app:cardBackgroundColor="@color/hud_scrim"
         app:cardCornerRadius="@dimen/hud_corner_radius"
         app:cardElevation="@dimen/hud_elevation"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <TextView
-            android:id="@+id/speed_text"
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:minWidth="96dp"
-            android:gravity="center"
+            android:orientation="horizontal"
+            android:baselineAligned="true"
+            android:gravity="bottom"
             android:paddingStart="@dimen/hud_padding_h"
             android:paddingEnd="@dimen/hud_padding_h"
             android:paddingTop="@dimen/hud_padding_v"
-            android:paddingBottom="@dimen/hud_padding_v"
-            android:textColor="@color/hud_on_scrim"
-            android:textAppearance="?attr/textAppearanceHeadlineMedium"
-            android:textStyle="bold"
-            android:text="@string/speed_placeholder"
-            tools:text="42 km/h" />
+            android:paddingBottom="@dimen/hud_padding_v">
+
+            <TextView
+                android:id="@+id/speed_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:includeFontPadding="false"
+                android:textColor="@color/hud_on_scrim"
+                android:textAppearance="?attr/textAppearanceHeadlineSmall"
+                android:textStyle="bold"
+                android:text="@string/speed_placeholder"
+                tools:text="42" />
+
+            <TextView
+                android:id="@+id/speed_unit"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:includeFontPadding="false"
+                android:textColor="@color/hud_on_scrim_variant"
+                android:textAppearance="?attr/textAppearanceLabelMedium"
+                android:text="@string/speed_unit" />
+
+        </LinearLayout>
 
     </com.google.android.material.card.MaterialCardView>
 
@@ -125,6 +155,7 @@
         android:contentDescription="@string/recenter"
         android:src="@drawable/ic_my_location"
         app:fabSize="mini"
+        app:elevation="2dp"
         app:tint="?attr/colorOnSurface"
         app:backgroundTint="?attr/colorSurface"
         app:layout_constraintBottom_toTopOf="@id/action_bar"
@@ -139,20 +170,23 @@
         android:contentDescription="@string/calibrate_compass"
         android:src="@drawable/ic_compass"
         app:fabSize="mini"
+        app:elevation="2dp"
         app:tint="?attr/colorOnSurface"
         app:backgroundTint="?attr/colorSurface"
         app:layout_constraintTop_toBottomOf="@id/speed_card"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- ===================== Bottom action bar ===================== -->
-
+    <!-- ===================== Bottom action bar =====================
+         Slim translucent sheet over the map, same scrim as the HUD chips —
+         borderless text buttons so the controls stay light, not a heavy card. -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/action_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        app:cardBackgroundColor="?attr/colorSurface"
-        app:cardCornerRadius="0dp"
-        app:cardElevation="6dp"
+        app:cardBackgroundColor="@color/hud_scrim"
+        app:cardElevation="0dp"
+        app:cardPreventCornerOverlap="false"
+        app:shapeAppearanceOverlay="@style/ShapeAppearance.Idr.ActionBar"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -163,56 +197,73 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:baselineAligned="false"
-            android:paddingStart="@dimen/spacing_small"
-            android:paddingEnd="@dimen/spacing_small"
-            android:paddingTop="@dimen/spacing_small"
-            android:paddingBottom="@dimen/spacing_small">
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/mute_toggle"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginEnd="4dp"
-                android:minHeight="@dimen/touch_target_min"
+                android:minWidth="0dp"
+                android:minHeight="44dp"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:textColor="@color/hud_action_text"
+                android:textAppearance="?attr/textAppearanceLabelMedium"
                 android:text="@string/gnss_mute_toggle"
                 app:icon="@drawable/ic_gnss_loss"
-                app:iconGravity="top"
-                app:iconSize="20dp" />
+                app:iconGravity="textStart"
+                app:iconPadding="4dp"
+                app:iconSize="18dp"
+                app:iconTint="@color/hud_action_text" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/compare_toggle"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="4dp"
-                android:layout_marginEnd="4dp"
-                android:minHeight="@dimen/touch_target_min"
+                android:minWidth="0dp"
+                android:minHeight="44dp"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:textColor="@color/hud_action_text"
+                android:textAppearance="?attr/textAppearanceLabelMedium"
                 android:text="@string/compare_toggle"
                 app:icon="@drawable/ic_compare"
-                app:iconGravity="top"
-                app:iconSize="20dp" />
+                app:iconGravity="textStart"
+                app:iconPadding="4dp"
+                app:iconSize="18dp"
+                app:iconTint="@color/hud_action_text" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/record_button"
-                style="@style/Widget.Material3.Button.TonalButton"
+                style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="4dp"
-                android:minHeight="@dimen/touch_target_min"
+                android:minWidth="0dp"
+                android:minHeight="44dp"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:textColor="@color/hud_action_text"
+                android:textAppearance="?attr/textAppearanceLabelMedium"
                 android:text="@string/record_trip"
                 app:icon="@drawable/ic_record"
-                app:iconGravity="top"
-                app:iconSize="20dp" />
+                app:iconGravity="textStart"
+                app:iconPadding="4dp"
+                app:iconSize="18dp"
+                app:iconTint="@color/hud_action_text" />
 
         </LinearLayout>
 

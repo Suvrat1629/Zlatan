@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -44,7 +45,7 @@ class MainActivity : AppCompatActivity() {
     private var bound = false
     private lateinit var mapRenderer: MapRenderer
     private lateinit var modeBadge: TextView
-    private lateinit var modeBadgeCard: com.google.android.material.card.MaterialCardView
+    private lateinit var modeDot: View
     private lateinit var speedText: TextView
     private lateinit var driftText: TextView
     private lateinit var muteToggle: Button
@@ -94,7 +95,7 @@ class MainActivity : AppCompatActivity() {
         mapRenderer.attach(findViewById(R.id.map_container))
 
         modeBadge = findViewById(R.id.mode_badge)
-        modeBadgeCard = findViewById(R.id.mode_badge_card)
+        modeDot = findViewById(R.id.mode_dot)
         speedText = findViewById(R.id.speed_text)
         driftText = findViewById(R.id.drift_text)
         applyWindowInsets()
@@ -194,13 +195,17 @@ class MainActivity : AppCompatActivity() {
 
                         modeBadge.text = buildString {
                             append(modeLabel(s.mode))
-                            append("  ")
-                            append(s.satsInFix)
-                            append(" sats")
-                            if (s.irnssSatsInFix > 0) append(" (NavIC ${s.irnssSatsInFix})")
+                            // Sat count is evaluator detail — keep it off the driver
+                            // label unless there's actually a fix to report.
+                            if (s.satsInFix > 0) {
+                                append("  ·  ")
+                                append(s.satsInFix)
+                                append(if (s.irnssSatsInFix > 0) " sats · NavIC ${s.irnssSatsInFix}" else " sats")
+                            }
                         }
-                        modeBadgeCard.strokeColor =
+                        modeDot.backgroundTintList = ColorStateList.valueOf(
                             ContextCompat.getColor(this@MainActivity, modeAccentColor(s.mode))
+                        )
                         speedText.text = getString(R.string.speed_format, s.speedMps * 3.6f)
                         service?.updateNotification(s.mode)
                     }

@@ -3,10 +3,14 @@
     <dimen name="spacing_medium">16dp</dimen>
     <dimen name="spacing_large">24dp</dimen>
 
-    <dimen name="hud_corner_radius">14dp</dimen>
-    <dimen name="hud_elevation">3dp</dimen>
-    <dimen name="hud_padding_h">14dp</dimen>
-    <dimen name="hud_padding_v">10dp</dimen>
+    <!-- HUD: tight, slim chips that sit over the map without dominating it. -->
+    <dimen name="hud_corner_radius">11dp</dimen>
+    <dimen name="hud_elevation">0dp</dimen>
+    <dimen name="hud_padding_h">11dp</dimen>
+    <dimen name="hud_padding_v">6dp</dimen>
+    <dimen name="hud_dot_size">8dp</dimen>
+
+    <dimen name="action_bar_corner">22dp</dimen>
 
     <dimen name="touch_target_min">48dp</dimen>
 </resources>
