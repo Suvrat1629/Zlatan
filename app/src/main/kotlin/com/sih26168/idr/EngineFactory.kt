@@ -72,5 +72,17 @@ object EngineFactory {
         EngineConfig.DEFAULT
     }
 
+    /**
+     * Model version from the packaged manifest, for the telemetry summary header. Read separately
+     * from [create] so a summary can be labelled even when the engine falls back to the stub.
+     */
+    fun modelVersion(context: Context): String = try {
+        AndroidAssetProvider(context)
+            .build(listOf(AndroidAssetProvider.PackagedEntry(MODEL_KIND, MODEL_ASSET, MODEL_MANIFEST_ASSET)))
+            .resolve(MODEL_KIND)?.manifest?.version ?: "unknown"
+    } catch (e: Exception) {
+        "unknown"
+    }
+
     private val DEFAULT_START = LatLon(12.9716, 77.5946)
 }

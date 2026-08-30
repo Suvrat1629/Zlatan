@@ -16,6 +16,7 @@ import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.Mode
 import com.sih26168.idr.core.types.PositionState
 import com.sih26168.idr.core.types.PositioningEngine
+import com.sih26168.idr.core.types.TelemetryTick
 import com.sih26168.idr.core.types.VehicleMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,6 +55,18 @@ class RealEngine(
     override val state: StateFlow<PositionState> = _state.asStateFlow()
 
     @Volatile private var lastGyroZ = 0f
+    @Volatile private var lastGnssBearingDeg = Float.NaN
+    @Volatile private var lastInferenceMs = Float.NaN
+    @Volatile private var lastDvMps2 = Float.NaN
+    @Volatile private var lastLambda = Float.NaN
+    // Swapped in and out as recording starts and stops: the engine outlives any one session.
+    @Volatile private var diagnostics: Diagnostics? = null
+    @Volatile private var telemetryWriter: TelemetryWriter? = null
+
+    fun setTelemetry(diagnostics: Diagnostics?, writer: TelemetryWriter?) {
+        this.diagnostics = diagnostics
+        this.telemetryWriter = writer
+    }
     // Heading must integrate EVERY gyro sample: point-sampling one z-rate per 100 ms tick
     // aliases fast turns (a 1-2 s 90-degree turn gets undercounted while a slow U-turn
     // survives — exactly the field symptom). Accumulated on the sensor thread, drained
@@ -125,6 +138,7 @@ class RealEngine(
         gx: Float, gy: Float, gz: Float,
     ) {
         lastGyroZ = gz
+        diagnostics?.onImuSample(tNanos)
         synchronized(headingAccumLock) {
             if (prevImuNanos != 0L) {
                 val dt = ((tNanos - prevImuNanos) / 1e9).coerceIn(0.0, 0.05)
@@ -141,6 +155,15 @@ class RealEngine(
         speedMps: Float, bearingDeg: Float, horizAccM: Float,
         satsInFix: Int, irnssSatsInFix: Int,
     ) {
+        diagnostics?.onGnssFix(tNanos)
+        lastGnssBearingDeg = bearingDeg
+        // The first trusted fix after a blackout is the only truth we get. Hand it to
+        // diagnostics with what the engine believed at that instant, before the fix is applied
+        // and the belief is overwritten.
+        diagnostics?.onReacquisition(
+            truth = LatLon(lat, lon),
+            engineBelief = LatLon(_state.value.lat, _state.value.lon),
+        )
         pendingGnssFix.set(GnssFixRecord(tNanos, lat, lon, speedMps, bearingDeg, horizAccM, satsInFix, irnssSatsInFix))
         lastKnownGnssSpeedMps.set(speedMps)
         modeArbiter.onGnssFix(tNanos, satsInFix, irnssSatsInFix)
@@ -206,7 +229,9 @@ class RealEngine(
         val features = FeatureExtractor.featureWindow(rawWindow)
         val normalized = normalizer.apply(features)
         val dtSeconds = 1.0 / config.outputRateHz
+        val inferStart = System.nanoTime()
         val vAbs = speedEstimator.estimate(normalized).coerceIn(config.speedMinMps, config.speedMaxMps)
+        lastInferenceMs = (System.nanoTime() - inferStart) / 1_000_000f
 
         // Drain the fully-integrated turn angle accumulated since the last tick and feed it
         // to the heading estimator as an equivalent mean rate (interface unchanged).
@@ -233,8 +258,10 @@ class RealEngine(
             dvSumSinceFix += dvRaw
             dvCountSinceFix++
             val dv = dvRaw - dvBiasMps2               // online bias correction (learned vs GNSS)
+            lastDvMps2 = dv
             val tSec = ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
             val lam = (tSec / (tSec + config.blendTauSeconds)).toFloat()
+            lastLambda = lam
             blendSpeedMps = if (stationary) 0f else
                 ((1f - lam) * (blendSpeedMps + dv * dtSeconds.toFloat()) + lam * vAbs)
                     .coerceIn(config.speedMinMps, config.speedMaxMps)
@@ -269,10 +296,37 @@ class RealEngine(
         // keeps the true trajectory; the matcher constrains only what the user sees.
         deadReckoner.reset(fused)
 
+        val mode = modeArbiter.currentMode(tEndNanos)
         publish(
             lat = matched.lat, lon = matched.lon, speedMps = speedOut, headingDeg = headingDeg.toFloat(),
-            mode = modeArbiter.currentMode(tEndNanos), tEndNanos = tEndNanos, tickStartNanos = t0,
+            mode = mode, tEndNanos = tEndNanos, tickStartNanos = t0,
         )
+
+        if (diagnostics != null || telemetryWriter != null) {
+            val tick = TelemetryTick(
+                tNanos = tEndNanos,
+                vModelMps = vAbs,
+                dvMps2 = lastDvMps2,
+                vOutMps = speedOut,
+                vGnssMps = lastKnownGnssSpeedMps.get(),
+                blendLambda = lastLambda,
+                yawRateRadS = (turnRad / dtSeconds).toFloat(),
+                headingDeg = headingDeg.toFloat(),
+                gnssBearingDeg = lastGnssBearingDeg,
+                aHorizMps2 = features.last()[0],          // channel 0 is a_horiz
+                stationary = stationary,
+                mode = mode,
+                satsInFix = modeArbiter.satsInFix(),
+                irnssSatsInFix = modeArbiter.irnssSatsInFix(),
+                lat = matched.lat,
+                lon = matched.lon,
+                uncertaintyM = fusionFilter.uncertaintyM(),
+                inferenceMs = lastInferenceMs,
+                tickMs = (System.nanoTime() - t0) / 1_000_000f,
+            )
+            diagnostics?.onTick(tick)
+            telemetryWriter?.write(tick)
+        }
     }
 
     private fun publish(
