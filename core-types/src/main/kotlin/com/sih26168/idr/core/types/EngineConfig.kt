@@ -18,6 +18,10 @@ data class EngineConfig(
     // Time-varying blend gain timescale: lam = t/(t+tau), t = seconds since GNSS anchor.
     val blendTauSeconds: Double = 240.0,
 
+    // ZUPT: below BOTH thresholds over a window, speed is clamped to 0 instantly.
+    val zuptAccelThresholdMps2: Float = 0.8f,
+    val zuptGyroThresholdRps: Float = 0.15f,
+
     val gnssLostNoFixTimeoutMs: Long = 3_000,
     val handoverSlewSeconds: Double = 1.5,
 

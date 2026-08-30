@@ -214,6 +214,13 @@ class RealEngine(
         // Fresh anchor -> ride the anchor + delta model (CV prior's strong zone).
         // Old/no anchor -> the duration-stable absolute model takes over (lam -> 1),
         // which also keeps indoor/hand-held behaviour pinned near zero (v2 negatives).
+        // ZUPT: sensors quiet -> we KNOW v = 0. Registers halts instantly (the blend alone
+        // only decays toward zero) and wipes the speed random-walk's accumulated error at
+        // every stop — the cheapest large drift win in stop-and-go traffic.
+        val stationary = ZeroVelocityDetector.isStationary(
+            features, config.zuptAccelThresholdMps2, config.zuptGyroThresholdRps,
+        )
+
         val speedMps = if (deltaEstimator != null && deltaNormalizer != null && lastAnchorNanos != 0L) {
             val dvRaw = deltaEstimator.estimate(deltaNormalizer.apply(features))
                 .coerceIn(-4f, 4f)                    // physical sanity: > 0.4 g is not a car
@@ -222,18 +229,19 @@ class RealEngine(
             val dv = dvRaw - dvBiasMps2               // online bias correction (learned vs GNSS)
             val tSec = ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
             val lam = (tSec / (tSec + config.blendTauSeconds)).toFloat()
-            blendSpeedMps = ((1f - lam) * (blendSpeedMps + dv * dtSeconds.toFloat()) + lam * vAbs)
-                .coerceIn(config.speedMinMps, config.speedMaxMps)
+            blendSpeedMps = if (stationary) 0f else
+                ((1f - lam) * (blendSpeedMps + dv * dtSeconds.toFloat()) + lam * vAbs)
+                    .coerceIn(config.speedMinMps, config.speedMaxMps)
             if (blendLogCounter++ % 20 == 0) {
                 System.out.println(
                     "IDR-BLEND vAbs=${"%.1f".format(vAbs * 3.6f)}km/h dvRaw=${"%.2f".format(dvRaw)} " +
                         "bias=${"%.2f".format(dvBiasMps2)} lam=${"%.3f".format(lam)} " +
-                        "t=${"%.0f".format(tSec)}s blend=${"%.1f".format(blendSpeedMps * 3.6f)}km/h"
+                        "t=${"%.0f".format(tSec)}s zupt=$stationary blend=${"%.1f".format(blendSpeedMps * 3.6f)}km/h"
                 )
             }
             blendSpeedMps
         } else {
-            vAbs
+            if (stationary) 0f else vAbs
         }
         headingEstimator.predict((turnRad / dtSeconds).toFloat(), dtSeconds)
         val headingDeg = headingEstimator.headingDeg()
