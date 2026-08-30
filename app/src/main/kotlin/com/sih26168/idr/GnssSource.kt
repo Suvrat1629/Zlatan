@@ -85,6 +85,7 @@ class GnssSource(
             bearingDeg = if (location.hasBearing()) location.bearing else 0f,
             horizAccM = accuracyM ?: 999f,
             satsInFix = satsInFix, irnssSatsInFix = irnssSatsInFix,
+            bearingValid = location.hasBearing(),
         )
     }
 

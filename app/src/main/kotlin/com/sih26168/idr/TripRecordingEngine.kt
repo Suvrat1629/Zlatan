@@ -53,9 +53,10 @@ class TripRecordingEngine(
         lat: Double, lon: Double,
         speedMps: Float, bearingDeg: Float, horizAccM: Float,
         satsInFix: Int, irnssSatsInFix: Int,
+        bearingValid: Boolean,
     ) {
-        logEvent(TraceEvent.Gnss(GnssFixRecord(tNanos, lat, lon, speedMps, bearingDeg, horizAccM, satsInFix, irnssSatsInFix)))
-        delegate.onGnssFix(tNanos, lat, lon, speedMps, bearingDeg, horizAccM, satsInFix, irnssSatsInFix)
+        logEvent(TraceEvent.Gnss(GnssFixRecord(tNanos, lat, lon, speedMps, bearingDeg, horizAccM, satsInFix, irnssSatsInFix, bearingValid)))
+        delegate.onGnssFix(tNanos, lat, lon, speedMps, bearingDeg, horizAccM, satsInFix, irnssSatsInFix, bearingValid)
     }
 
     override fun onGnssLost(tNanos: Long) {

@@ -24,5 +24,13 @@
   "gnss_starved_accuracy_ceiling_m": 150.0,
   "handover_slew_seconds": 1.5,
   "output_rate_hz": 10.0,
-  "engine_tick_p95_budget_ms": 50.0
+  "engine_tick_p95_budget_ms": 50.0,
+  "use_error_state_ekf": true,
+  "use_hmm_map_matcher": false,
+  "hmm_max_snap_m": 35.0,
+  "hmm_candidate_count": 5,
+  "hmm_emission_sigma_m": 10.0,
+  "hmm_transition_beta_m": 5.0,
+  "hmm_max_transition_search_m": 400.0,
+  "hmm_min_advance_displacement_m": 8.0
 }

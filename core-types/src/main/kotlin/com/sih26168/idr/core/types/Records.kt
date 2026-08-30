@@ -15,4 +15,7 @@ data class GnssFixRecord(
     val lat: Double, val lon: Double,
     val speedMps: Float, val bearingDeg: Float, val horizAccM: Float,
     val satsInFix: Int, val irnssSatsInFix: Int,
+    // Android's Location.hasBearing() -- bearingDeg defaults to 0f when this is false, so
+    // consumers must not treat bearingDeg as a real heading measurement without checking.
+    val bearingValid: Boolean = false,
 )

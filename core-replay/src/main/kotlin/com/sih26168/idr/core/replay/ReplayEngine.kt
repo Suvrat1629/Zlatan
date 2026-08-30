@@ -13,7 +13,7 @@ class ReplayEngine(private val engine: PositioningEngine) {
                     engine.onImuSample(tNanos, ax, ay, az, grx, gry, grz, gx, gy, gz)
                 }
                 is TraceEvent.Gnss -> with(event.record) {
-                    engine.onGnssFix(tNanos, lat, lon, speedMps, bearingDeg, horizAccM, satsInFix, irnssSatsInFix)
+                    engine.onGnssFix(tNanos, lat, lon, speedMps, bearingDeg, horizAccM, satsInFix, irnssSatsInFix, bearingValid)
                 }
                 is TraceEvent.Lost -> engine.onGnssLost(event.tNanos)
             }

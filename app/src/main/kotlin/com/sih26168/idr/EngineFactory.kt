@@ -3,6 +3,8 @@ package com.sih26168.idr
 import android.content.Context
 import com.sih26168.idr.androidassets.AndroidAssetProvider
 import com.sih26168.idr.androidmodel.TfliteSpeedEstimator
+import com.sih26168.idr.core.nav.ErrorStateEkf
+import com.sih26168.idr.core.nav.PassthroughFusionFilter
 import com.sih26168.idr.core.types.EngineConfig
 import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.PositioningEngine
@@ -57,10 +59,19 @@ object EngineFactory {
             System.err.println("[EngineFactory] no delta model (${e.message}) — running absolute-only speed")
         }
 
+        val fusionFilter = if (config.useErrorStateEkf) {
+            System.out.println("[EngineFactory] fusion filter: ErrorStateEkf (config.use_error_state_ekf=true)")
+            ErrorStateEkf(startAt, config)
+        } else {
+            System.out.println("[EngineFactory] fusion filter: PassthroughFusionFilter (config.use_error_state_ekf=false)")
+            PassthroughFusionFilter(startAt)
+        }
+
         return RealEngine(
             config = config, speedEstimator = estimator, normalizer = normalizer, startAt = startAt,
             deltaEstimator = deltaEstimator, deltaNormalizer = deltaNormalizer,
-            mapMatcher = RoadsLoader.load(context),
+            mapMatcher = RoadsLoader.load(context, config),
+            fusionFilter = fusionFilter,
         )
     }
 

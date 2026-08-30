@@ -164,6 +164,7 @@ class RealEngine(
         lat: Double, lon: Double,
         speedMps: Float, bearingDeg: Float, horizAccM: Float,
         satsInFix: Int, irnssSatsInFix: Int,
+        bearingValid: Boolean,
     ) {
         diagnostics?.onGnssFix(tNanos)
         lastGnssBearingDeg = bearingDeg
@@ -176,7 +177,7 @@ class RealEngine(
             truth = LatLon(lat, lon),
             engineBelief = LatLon(_state.value.lat, _state.value.lon),
         )
-        pendingGnssFix.set(GnssFixRecord(tNanos, lat, lon, speedMps, bearingDeg, horizAccM, satsInFix, irnssSatsInFix))
+        pendingGnssFix.set(GnssFixRecord(tNanos, lat, lon, speedMps, bearingDeg, horizAccM, satsInFix, irnssSatsInFix, bearingValid))
         lastKnownGnssSpeedMps.set(speedMps)
         modeArbiter.onGnssFix(tNanos, satsInFix, irnssSatsInFix)
     }
@@ -200,7 +201,7 @@ class RealEngine(
         val fix = pendingGnssFix.getAndSet(null)
         if (fix != null) {
             headingEstimator.seedFromGnssCourse(fix.bearingDeg)
-            fusionFilter.updateWithGnss(LatLon(fix.lat, fix.lon), fix.speedMps, fix.bearingDeg, fix.horizAccM)
+            fusionFilter.updateWithGnss(LatLon(fix.lat, fix.lon), fix.speedMps, fix.bearingDeg, fix.horizAccM, fix.bearingValid)
             // CRITICAL: also snap the dead-reckoner to the fix. Without this, the next
             // deadReckoner.step() continues from its own stale position and
             // fusionFilter.predict() overwrites the GNSS update in this same tick — so the
@@ -309,12 +310,15 @@ class RealEngine(
         val headingDeg = headingEstimator.headingDeg()
 
         val deadReckoned = deadReckoner.step(slewed, headingDeg, dtSeconds)
+        // headingDeg here is the raw gyro-integrated control input -- it must stay raw, not
+        // the filter's own corrected heading, or the correction would feed back into itself
+        // instead of being driven by fresh gyro data.
         fusionFilter.predict(deadReckoned, slewed, headingDeg, dtSeconds)
         val fused = fusionFilter.estimate()
-        val matched = mapMatcher.snap(fused)
+        val matched = mapMatcher.snap(fused).position
         // Snap is DISPLAY-ONLY. Resetting the dead-reckoner to the matched point erased all
         // cross-track motion every tick: a turn's first sideways metres got projected back
-        // onto the current road and then committed, so the dot could never reach the cross
+        // onto the current way and then committed, so the dot could never reach the cross
         // street (U-turns survived because reversing runs ALONG the same way). The reckoner
         // keeps the true trajectory; the matcher constrains only what the user sees.
         deadReckoner.reset(fused)
@@ -339,9 +343,14 @@ class RealEngine(
             headingEstimator.nudgeToward(target, config.roadHeadingGain)
         }
 
+        // The filter may track its own, better-corrected heading (e.g. ErrorStateEkf, via
+        // GNSS bearing and position-residual coupling) -- publish that when available instead
+        // of the raw gyro heading, which never benefits from those corrections on its own.
+        val publishedHeadingDeg = fusionFilter.headingDeg() ?: headingDeg
+
         val mode = modeArbiter.currentMode(tEndNanos)
         publish(
-            lat = matched.lat, lon = matched.lon, speedMps = slewed, headingDeg = headingDeg.toFloat(),
+            lat = matched.lat, lon = matched.lon, speedMps = slewed, headingDeg = publishedHeadingDeg.toFloat(),
             mode = mode, tEndNanos = tEndNanos, tickStartNanos = t0,
         )
 
@@ -354,7 +363,7 @@ class RealEngine(
                 vGnssMps = lastKnownGnssSpeedMps.get(),
                 blendLambda = lastLambda,
                 yawRateRadS = (turnRad / dtSeconds).toFloat(),
-                headingDeg = headingDeg.toFloat(),
+                headingDeg = publishedHeadingDeg.toFloat(),
                 gnssBearingDeg = lastGnssBearingDeg,
                 aHorizMps2 = features.last()[0],          // channel 0 is a_horiz
                 stationary = stationary,
