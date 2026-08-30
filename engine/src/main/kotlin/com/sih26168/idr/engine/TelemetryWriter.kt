@@ -129,8 +129,10 @@ object SummaryReport {
         if (s.outages.isEmpty()) appendLine("none")
         s.outages.forEachIndexed { i, o ->
             appendLine(
-                "#${i + 1}  ${f(o.durationSeconds)}s  dr=${f(o.deadReckonedDistanceM)}m  " +
-                    "err=${f(o.errorM)}m  drift=${f(o.driftPercent)}%"
+                "#${i + 1}  ${f(o.durationSeconds)}s  true=${f(o.trueDistanceM)}m  " +
+                    "dr=${f(o.deadReckonedDistanceM)}m  over=${f(o.overTravelRatio)}x  " +
+                    "err=${f(o.errorM)}m  drift=${f(o.driftPercent)}%" +
+                    if (o.driftIsAgainstTruth) "" else "  (vs dr — no truth)"
             )
         }
         if (s.markers.isNotEmpty()) {

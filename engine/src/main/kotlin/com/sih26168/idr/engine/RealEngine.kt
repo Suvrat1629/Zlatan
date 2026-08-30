@@ -267,6 +267,18 @@ class RealEngine(
         modeArbiter.onGnssFix(tNanos, satsInFix, irnssSatsInFix)
     }
 
+    /**
+     * A fix that is deliberately being withheld from the filter (GNSS muted for a blackout probe),
+     * handed to diagnostics as ground truth only.
+     *
+     * Deliberately NOT routed through [onGnssFix]: nothing here may touch the filter, the mode
+     * arbiter, the blend anchor or any published value, or the probe would be measuring a system
+     * that was quietly still being corrected.
+     */
+    fun onGnssTruthOnly(lat: Double, lon: Double) {
+        diagnostics?.onGnssTruthOnly(LatLon(lat, lon))
+    }
+
     override fun onGnssLost(tNanos: Long) {
         modeArbiter.onGnssLost()
     }

@@ -102,7 +102,9 @@ class EngineService : Service() {
                 accuracyGateM = config.gnssAccuracyGateM,
                 starvedAfterSeconds = config.gnssStarvedAfterSeconds,
                 starvedAccuracyCeilingM = config.gnssStarvedAccuracyCeilingM,
-            )
+            ).apply {
+                truthSink = { lat, lon -> realEngine?.onGnssTruthOnly(lat, lon) }
+            }
         } catch (e: SensorSource.NoGyroscopeException) {
             startupFailed = true
             Toast.makeText(this, getString(R.string.no_gyroscope_error), Toast.LENGTH_LONG).show()

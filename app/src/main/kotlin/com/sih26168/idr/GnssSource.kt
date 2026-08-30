@@ -23,6 +23,9 @@ class GnssSource(
 ) {
     @Volatile var gnssMuted: Boolean = false
 
+    /** Where withheld fixes go for scoring. Set by [EngineService]; never wired to the filter. */
+    @Volatile var truthSink: ((Double, Double) -> Unit)? = null
+
     private val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
     private val statusThread = HandlerThread("idr-gnss-status").apply { start() }
@@ -62,6 +65,11 @@ class GnssSource(
         lastFixElapsedRealtimeNanos = nowElapsedRealtimeNanos
         if (gnssMuted) {
             mutedDrops.incrementAndGet()
+            // The fix is withheld from the ENGINE, not from the record. During a blackout probe the
+            // phone still has a good fix and the app is merely choosing not to navigate by it —
+            // throwing it away too meant the outage could only be scored endpoint-to-endpoint,
+            // which understates a path with turns. This reaches diagnostics only.
+            truthSink?.invoke(location.latitude, location.longitude)
             return@LocationListener
         }
 

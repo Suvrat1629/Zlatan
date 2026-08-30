@@ -94,9 +94,39 @@ data class OutageRecord(
     val deadReckonedDistanceM: Double,
     /** Straight-line error between the engine's position and the first trusted fix, metres. */
     val errorM: Double,
+    /** Ground-truth distance travelled during the outage, metres, from GNSS. NaN when unknown.
+     *  This is the benchmark's denominator and the only honest one — see [driftPercent]. */
+    val trueDistanceM: Double = Double.NaN,
 ) {
+    /**
+     * Drift as a percentage of distance travelled — the benchmark metric.
+     *
+     * **Divided by ground truth, not by the engine's own belief.** It used to divide by
+     * [deadReckonedDistanceM], which is wrong in the worst possible way: the denominator is itself
+     * a product of the error being measured, so the further the engine over-travels the smaller the
+     * reported drift becomes. The metric improved as the system got worse.
+     *
+     * Measured on the 2026-08-31 bike session: the engine over-travelled 3.26x, and the old formula
+     * reported a median 42% where the true figure against GNSS distance was 154%. Off by the
+     * over-travel factor, in the flattering direction, on the headline number.
+     *
+     * Falls back to the old denominator only when truth is unavailable, and [driftIsAgainstTruth]
+     * says which was used so a reader is never silently handed the optimistic one.
+     */
     val driftPercent: Double
-        get() = if (deadReckonedDistanceM > 1.0) errorM / deadReckonedDistanceM * 100.0 else Double.NaN
+        get() = when {
+            trueDistanceM > 1.0 -> errorM / trueDistanceM * 100.0
+            deadReckonedDistanceM > 1.0 -> errorM / deadReckonedDistanceM * 100.0
+            else -> Double.NaN
+        }
+
+    val driftIsAgainstTruth: Boolean get() = trueDistanceM > 1.0
+
+    /** How much further the engine believed it travelled than it did. 1.0 is perfect; the bike
+     *  session measured 3.26. This is the speed error made visible, and it is what corrupted the
+     *  old drift metric. */
+    val overTravelRatio: Double
+        get() = if (trueDistanceM > 1.0) deadReckonedDistanceM / trueDistanceM else Double.NaN
 }
 
 /**

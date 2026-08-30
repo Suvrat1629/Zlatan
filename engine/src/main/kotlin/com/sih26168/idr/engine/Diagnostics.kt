@@ -57,6 +57,17 @@ class Diagnostics(
     // Outage tracking
     private var outageStartNanos = 0L
     private var outageDistanceM = 0.0
+    /**
+     * Ground-truth path length during the current outage, from GNSS fixes that were withheld from
+     * the engine but not from the record.
+     *
+     * During a deliberate blackout the phone still has a perfectly good fix — the app is choosing
+     * not to use it. Discarding it as well meant an outage could only be scored endpoint-to-
+     * endpoint, and straight-line displacement badly understates a path with turns in it. Keeping
+     * it here scores the probe properly without any of it reaching the filter.
+     */
+    private var outageTruthDistanceM = 0.0
+    private var lastTruthPos: LatLon? = null
     private var prevTickPos: LatLon? = null
     private var inOutage = false
     // The re-acquisition anchor arrives before the tick that closes the outage record, so it is
@@ -141,6 +152,8 @@ class Diagnostics(
             inOutage = true
             outageStartNanos = t.tNanos
             outageDistanceM = 0.0
+            outageTruthDistanceM = 0.0
+            lastTruthPos = null
             pendingTruth = null
             pendingBelief = null
         } else if (denied) {
@@ -162,6 +175,7 @@ class Diagnostics(
                     durationSeconds = (t.tNanos - outageStartNanos) / 1e9,
                     deadReckonedDistanceM = outageDistanceM,
                     errorM = errM,
+                    trueDistanceM = if (outageTruthDistanceM > 0.0) outageTruthDistanceM else Double.NaN,
                 )
             )
         }
@@ -173,6 +187,21 @@ class Diagnostics(
      * the one arriving during an outage is the anchor — and the outage record does not exist yet
      * at that point, so the pair is stashed and [onTick] consumes it when it closes the record.
      */
+    /**
+     * A GNSS fix the engine is NOT being given — because GNSS is muted for a blackout test — but
+     * which is still perfectly valid ground truth. Accumulates the true path length so the outage
+     * can be scored against distance actually travelled rather than straight-line displacement.
+     *
+     * Nothing here touches the filter, the position, or any published value. It exists purely so a
+     * controlled probe produces a scorable number.
+     */
+    @Synchronized
+    fun onGnssTruthOnly(truth: LatLon) {
+        if (!inOutage) { lastTruthPos = truth; return }
+        lastTruthPos?.let { outageTruthDistanceM += Geo.distanceM(it, truth) }
+        lastTruthPos = truth
+    }
+
     @Synchronized
     fun onReacquisition(truth: LatLon, engineBelief: LatLon) {
         if (!inOutage) return
