@@ -20,6 +20,18 @@ android {
         versionName = "0.1.0-phase0"
     }
 
+    buildTypes {
+        debug {
+            // Side-by-side install: this branch's debug build gets its own package id, so it
+            // sits next to a debug build from another branch (main, etc.) instead of replacing
+            // it. Its storage, permissions, tile cache and sideloaded model assets are all
+            // separate -- re-grant permissions and re-import the model on first launch.
+            // Reverts automatically on branch switch (this block lives on feat/map-matcher).
+            applicationIdSuffix = ".mm"
+            versionNameSuffix = "-mapmatcher"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">IDR</string>
+    <string name="app_name">IDR·MM</string>
     <string name="mode_init">Starting…</string>
     <string name="mode_navic">NavIC</string>
     <string name="mode_gnss">GNSS</string>

@@ -99,6 +99,23 @@ class RealEngine(
     private var prevFixSpeedMps = Float.NaN
     private var prevFixNanos = 0L
 
+    // Map-match fusion only runs when the matcher actually emits a fusable covariance (the
+    // HMM). Feeding a greedy snapper's nearest-segment pick into the EKF as a tight
+    // measurement is worse than display-only -- see MapMatcher.emitsFusableCovariance.
+    private val mapMatchFusionEnabled: Boolean = config.useMapMatchFusion && mapMatcher.emitsFusableCovariance
+    private var mapMatchGateOkCount = 0L
+    private var mapMatchGateFailCount = 0L
+    private var mapMatchGateLogCounter = 0
+
+    init {
+        if (config.useMapMatchFusion && !mapMatcher.emitsFusableCovariance) {
+            System.err.println(
+                "[RealEngine] use_map_match_fusion IGNORED: needs the HMM matcher " +
+                    "(set use_hmm_map_matcher=true); got ${mapMatcher::class.simpleName}. Running display-only."
+            )
+        }
+    }
+
     @Volatile private var running = false
     private val periodMs = (1000.0 / config.outputRateHz).toLong()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { r ->
@@ -291,13 +308,56 @@ class RealEngine(
         // the filter's own corrected heading, or the correction would feed back into itself
         // instead of being driven by fresh gyro data.
         fusionFilter.predict(deadReckoned, speedOut, headingDeg, dtSeconds)
+        val preMatchPos = fusionFilter.estimate()
+        // ONE snap call per tick -- the HMM advances its hypothesis chain on each call past the
+        // displacement gate, so calling it twice would double-step it.
+        val matchResult = mapMatcher.snap(preMatchPos)
+        val gatePasses = matchResult.onRoad &&
+            matchResult.roadBearingDeg != null &&
+            matchResult.uncertaintyM <= config.mapMatchMaxFuseUncertaintyM
+        val fuseMapMatch = mapMatchFusionEnabled && gatePasses
+        // Gate statistics run whenever the matcher COULD be fused (i.e. the HMM), even with
+        // use_map_match_fusion off -- a display-only drive on the real 25k-way graph then
+        // still reveals whether the toy-fixture-calibrated 15 m gate fires often enough,
+        // turning one drive into the data that decides the fusion flag. Rate-limited to the
+        // IDR-BLEND cadence.
+        if (mapMatcher.emitsFusableCovariance) {
+            if (gatePasses) mapMatchGateOkCount++ else mapMatchGateFailCount++
+            if (mapMatchGateLogCounter++ % 20 == 0) {
+                val reason = when {
+                    !matchResult.onRoad -> "off-road"
+                    matchResult.roadBearingDeg == null -> "no-bearing"
+                    matchResult.uncertaintyM > config.mapMatchMaxFuseUncertaintyM ->
+                        "unc=${"%.1f".format(matchResult.uncertaintyM)}>${config.mapMatchMaxFuseUncertaintyM}"
+                    else -> "gate-ok"
+                }
+                val total = mapMatchGateOkCount + mapMatchGateFailCount
+                val applied = if (mapMatchFusionEnabled) "applied" else "display-only"
+                System.out.println(
+                    "IDR-MAPFUSE $reason ($applied) gate-ok=$mapMatchGateOkCount/$total " +
+                        "(${"%.0f".format(100.0 * mapMatchGateOkCount / total)}%)"
+                )
+            }
+        }
+        if (fuseMapMatch) {
+            // Anisotropic: tight across the road, ~free along it. Unlike the reverted
+            // "reset the reckoner to the matched point", this is a covariance-weighted partial
+            // pull that only touches cross-track -- it can't erase a genuine turn onto a cross
+            // street (the HMM switches hypotheses as the sideways motion accumulates).
+            fusionFilter.updateWithMapMatch(
+                matchResult.position,
+                alongTrackSigmaM = config.mapMatchAlongTrackSigmaM,
+                crossTrackSigmaM = matchResult.uncertaintyM.coerceAtLeast(config.mapMatchMinCrossTrackSigmaM),
+                roadBearingDeg = matchResult.roadBearingDeg!!,
+            )
+        }
         val fused = fusionFilter.estimate()
-        val matched = mapMatcher.snap(fused).position
-        // Snap is DISPLAY-ONLY. Resetting the dead-reckoner to the matched point erased all
-        // cross-track motion every tick: a turn's first sideways metres got projected back
-        // onto the current way and then committed, so the dot could never reach the cross
-        // street (U-turns survived because reversing runs ALONG the same way). The reckoner
-        // keeps the true trajectory; the matcher constrains only what the user sees.
+        // Default (display-only) path: publish the snapped point but keep the reckoner on the
+        // true, unmatched trajectory -- resetting it to the match erased cross-track motion
+        // every tick (a turn's first sideways metres got projected back onto the current way
+        // before the dot could ever reach the cross street). Fusion path: the filter itself is
+        // road-corrected now, so its own estimate is what we publish and continue from.
+        val displayPos = if (fuseMapMatch) fused else matchResult.position
         deadReckoner.reset(fused)
 
         // The filter may track its own, better-corrected heading (e.g. ErrorStateEkf, via
@@ -307,7 +367,7 @@ class RealEngine(
 
         val mode = modeArbiter.currentMode(tEndNanos)
         publish(
-            lat = matched.lat, lon = matched.lon, speedMps = speedOut, headingDeg = publishedHeadingDeg.toFloat(),
+            lat = displayPos.lat, lon = displayPos.lon, speedMps = speedOut, headingDeg = publishedHeadingDeg.toFloat(),
             mode = mode, tEndNanos = tEndNanos, tickStartNanos = t0,
         )
 
@@ -327,8 +387,8 @@ class RealEngine(
                 mode = mode,
                 satsInFix = modeArbiter.satsInFix(),
                 irnssSatsInFix = modeArbiter.irnssSatsInFix(),
-                lat = matched.lat,
-                lon = matched.lon,
+                lat = displayPos.lat,
+                lon = displayPos.lon,
                 uncertaintyM = fusionFilter.uncertaintyM(),
                 inferenceMs = lastInferenceMs,
                 tickMs = (System.nanoTime() - t0) / 1_000_000f,

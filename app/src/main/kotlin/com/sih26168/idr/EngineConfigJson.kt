@@ -32,6 +32,10 @@ object EngineConfigJson {
             hmmTransitionBetaM = o.optDouble("hmm_transition_beta_m", d.hmmTransitionBetaM.toDouble()).toFloat(),
             hmmMaxTransitionSearchM = o.optDouble("hmm_max_transition_search_m", d.hmmMaxTransitionSearchM.toDouble()).toFloat(),
             hmmMinAdvanceDisplacementM = o.optDouble("hmm_min_advance_displacement_m", d.hmmMinAdvanceDisplacementM.toDouble()).toFloat(),
+            useMapMatchFusion = o.optBoolean("use_map_match_fusion", d.useMapMatchFusion),
+            mapMatchMaxFuseUncertaintyM = o.optDouble("map_match_max_fuse_uncertainty_m", d.mapMatchMaxFuseUncertaintyM.toDouble()).toFloat(),
+            mapMatchMinCrossTrackSigmaM = o.optDouble("map_match_min_cross_track_sigma_m", d.mapMatchMinCrossTrackSigmaM.toDouble()).toFloat(),
+            mapMatchAlongTrackSigmaM = o.optDouble("map_match_along_track_sigma_m", d.mapMatchAlongTrackSigmaM.toDouble()).toFloat(),
         )
     }
 }

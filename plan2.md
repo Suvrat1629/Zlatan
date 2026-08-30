@@ -250,6 +250,32 @@ speed blend (anchor+delta, dv-bias EMA, ZUPT) is untouched — the EKF receives 
 a real drive now is: EKF position/heading fusion + GNSS-bearing correction, on top of the
 existing speed pipeline.
 
+**2026-08-30 — covariance-realism check before step 6; ARW re-grounded 1.41 -> 4.2.**
+Advisor flagged (correctly) that the `ekfHeadingArwDegPerSqrtSec = 1.41` fit — least-squares
+against `summary.json` cross-track-vs-duration medians — is not an ARW: it lumps angle random
+walk, rate random walk and gyro scale-factor error into one white-noise coefficient, then
+feeds it to Q as if it were only the first. And `ErrorStateEkfOutageTest` injected its
+synthetic heading noise from that *same* constant, so it structurally could not detect an
+under-inflated Q.
+
+Added `ekfCovarianceRealismUnderHeadingNoiseMismatch`: drives the 60 s outage with the
+injected ARW decoupled from the filter's assumed value, at 1x / 3x / 10x. Result — at 1x the
+filter is consistent (reported sigma ~= actual error at outage end); **at 3x it is ~2.5x
+overconfident and the EKF loses to a raw last-fix snap on reacquisition** (21/40 down from
+30/40), at 10x it is ~9x overconfident (7/40). This is the same failure mode this log's
+earlier "position-only is actively WRONG" entry describes, and the `[n,e,theta]` fix only
+holds while Q is roughly right.
+
+Interim fix, pending a real Allan variance: set `ekfHeadingArwDegPerSqrtSec = 4.2` (= 3x).
+Chosen because at that value the synthetic 60 s outage drift (~22%) matches Part C's measured
+~25% median 2D system drift (`15-Part-C-Fusion-Drift.md`), and because underconfident is the
+safe failure direction — slower but monotonic reacquisition, not divergence. Full JVM suite +
+`:app:compileDebugKotlin`/`:app:assembleDebug` green. **Still open**: the real
+ARW + bias-instability split needs a stationary-phone Allan variance recording (architecture
+doc §11) — this 4.2 is a grounded stopgap, not the measured number. Also a behaviour change
+to A/B on a real drive: the EKF's uncertainty ellipse is now ~3x larger between fixes and it
+weights GNSS more heavily.
+
 ## 3b. Map matcher progress log
 
 **2026-08-30 — RoadGraph landed; HMM built on top (§3 steps 2-4, uncommitted).** Scoped per an
@@ -303,11 +329,121 @@ is fully consistent. `RoadGraphTest` separately checks `routeDistanceM` picks th
 two junction paths and returns null when genuinely unreachable within the search cutoff. Full
 JVM suite (all modules) and `:app:compileDebugKotlin`/`:app:assembleDebug` verified clean.
 
-**Not done**: step 1 (attribute extraction — data upgrade, not blocking), step 5 in the sense
-the doc means it (validation against a real recorded track — no such data here, same gap as
-the EKF's), step 6 (wiring as an EKF measurement — deliberately deferred, needs its own care
-given what step 6 replaces already failed once), tunnel-portal landmarks (needs step 1's tunnel
-lengths).
+**Not done** (at time of the entry above): step 1 (attribute extraction — data upgrade, not
+blocking), step 5 in the sense the doc means it (validation against a real recorded track — no
+such data here, same gap as the EKF's), step 6 (wiring as an EKF measurement — deliberately
+deferred), tunnel-portal landmarks (needs step 1's tunnel lengths).
+
+**2026-08-30 — step 2 (interface) + step 6 (matcher as an EKF measurement) landed, gated
+OFF (uncommitted).** Done together because step 6 is what actually delivers the KPI value: it
+is the one thing in this whole plan that bounds heading-driven cross-track error *during* a
+blackout (GNSS bearing, wired in §3a, is unavailable then; architecture doc §4 — "map matching
+fixes cross-track brilliantly").
+
+- **`FusionFilter` interface (step 2).** `predict` gained `speedSigmaMps: Float? = null` —
+  threaded through everywhere as null today, so the speed model's variance head (Decision 3)
+  becomes a value change not an interface change when it lands. New `updateWithMapMatch(pos,
+  alongTrackSigmaM, crossTrackSigmaM, roadBearingDeg)` with a default no-op body
+  (`PassthroughFusionFilter` and non-map callers untouched). `headingUncertaintyDeg()` promoted
+  onto the interface; `ErrorStateEkf.positionCovarianceNE()` added for the real 2×2 the
+  uncertainty ellipse needs.
+- **`ErrorStateEkf.updateWithMapMatch`.** Two scalar Kalman updates in the road-aligned basis
+  via a new generic `updateRow(H, y, r)`: cross-track gets `R = crossTrackSigmaM²` (the real
+  information), along-track gets `R = (10 km)²` — a deliberate near-no-op, because a straight
+  road carries zero information about how far along it you are and must not shrink the
+  along-track covariance. Verified by `mapMatchCorrectsCrossTrackButNotAlongTrack` (+ an
+  east–west-road variant for the axis rotation): cross-track error and variance collapse,
+  along-track estimate moves <10% of the cross-track correction and its variance stays >85%.
+- **`MapMatchResult.roadBearingDeg`** — new nullable field, the matched segment's bearing as
+  an axis, from `RoadGraph.bearingDegOf`. Populated by both `RoadMatcher` and `HmmMapMatcher`.
+- **`RealEngine` wiring.** One `snap()` call per tick (the HMM advances state per call, so two
+  would double-step it). When `config.useMapMatchFusion` (default **false**) and the match is
+  on-road and confident (`uncertaintyM ≤ mapMatchMaxFuseUncertaintyM`, default 15 m),
+  `updateWithMapMatch` is applied and the road-corrected filter estimate is published. With the
+  flag off, behaviour is byte-for-byte the old display-only path — snapped point published,
+  reckoner kept on the true trajectory.
+- **Why OFF by default.** This is the step commit `471520c` territory. That revert was a *hard
+  snap* of the reckoner; this is a covariance-weighted partial pull that only touches
+  cross-track and can't erase a genuine turn (the HMM switches hypotheses as sideways motion
+  accumulates). Different mechanism — but unvalidated on a real drive, so same discipline as
+  `useErrorStateEkf`/`useHmmMapMatcher`: ships reachable, not default, until a real drive
+  (or replay against real traces, still absent here) shows it beats display-only.
+- **Also, per the advisor's fixture-fit check on §3b:** added
+  `hmmStillDiscriminatesParallelRoadsTighterThanTheDisplacementGate` — rebuilds the parallel-
+  roads fixture at 4 m spacing (tighter than the 8 m `hmmMinAdvanceDisplacementM` default) and
+  confirms the HMM stays on the correct road at gate values 2 / 8 / 16 m. The earlier 8 m/8 m
+  coincidence was not load-bearing.
+
+**Two real HMM bugs found while adding the turn-following test the advisor asked for:**
+
+1. **The HMM would not follow a genuine turn onto a cross street.** A right-angle turn taken
+   over one advance step makes the on-road route ~0.59x longer than the straight-line distance
+   between the two observations — pure geometry — and the old `-|routeDist - gcDist|/beta`
+   transition term penalised that as a detour, so the strong "keep going straight" hypothesis
+   always edged out the turn. This is 471520c's failure mode via a different mechanism, and it
+   would have made `useMapMatchFusion=true` fight every turn. Fixed: tolerate a route excess of
+   up to `0.6 * step` before the penalty engages (`CORNER_TOLERANCE_FRAC`); a genuinely wrong
+   match still needs a real detour and is still rejected hard. `hmmFollowsAGenuineTurnOntoThe-
+   CrossStreet` is the regression test; the parallel-road and tight-4 m tests still pass, so
+   the fix isn't overfit — it holds both "stay put under noise" and "switch on a real turn".
+
+2. **`HmmMapMatcher.uncertaintyM` ignored distance-to-road.** It was only the hypothesis-
+   position spread, so a match that was unambiguous but 20 m off any road reported ~4 m and
+   would have been fused. `RoadMatcher.uncertaintyM` (perpendicular snap distance) is a
+   different quantity, and `mapMatchMaxFuseUncertaintyM` has to gate both. Fixed: HMM now adds
+   the top candidate's perpendicular distance in quadrature, so both matchers emit a real
+   positional 1-std on the same scale. `uncertaintyGrowsWithDistanceFromTheRoadNotJust-
+   HypothesisSpread` pins it.
+
+**Display-only regression guard (advisor item 1):** `RealEngineTest.mapMatchFusionOffLeaves-
+TheDisplayOnlyPathUnchanged` drives the engine with a fake fixed matcher and
+`useMapMatchFusion=false` and asserts the published dot is exactly the snapped point and the
+filter was never pulled — the one path that ships today is now a check, not a claim.
+`mapMatchFusionOnPullsTheEstimateNotJustTheDisplay` covers the flag-on path.
+
+**Guards added before the flag can be flipped (advisor round 2):**
+
+- **`useMapMatchFusion` requires the HMM.** `useHmmMapMatcher` defaults false, so the natural
+  one-line `use_map_match_fusion: true` would otherwise feed the *greedy* `RoadMatcher` (the
+  one `greedyMatcherFlickersOntoTheWrongParallelRoad` proves gets pulled onto the wrong road)
+  into the EKF as a tight cross-track measurement — strictly worse than display-only. New
+  `MapMatcher.emitsFusableCovariance` (true only for `HmmMapMatcher`); `RealEngine` logs a loud
+  `use_map_match_fusion IGNORED` and stays display-only otherwise. Test:
+  `mapMatchFusionIsRefusedForAMatcherThatDoesNotEmitFusableCovariance`.
+- **Gate-rejection telemetry.** `IDR-MAPFUSE` logs every 20 ticks with the reason
+  (`off-road` / `no-bearing` / `unc=X>thr` / `fused`) and the cumulative fused fraction, so a
+  real-drive A/B can tell "fusion didn't help" from "fusion never fired". The 15 m
+  `mapMatchMaxFuseUncertaintyM` was calibrated on the 4-edge toy fixture; on the real 25k-way
+  Bangalore graph the hypothesis spread (now added in quadrature with snap distance) may push
+  many matches over it, so the first drive needs a sanity check of the reject rate before
+  reading any A/B result.
+- Display-only regression test strengthened to also assert the filter's uncertainty is
+  identical to a no-matcher twin engine — proves the match never reaches the filter with the
+  flag off, which the position-only assertion didn't.
+
+**2026-08-30 — `useHmmMapMatcher` flipped to true (default); fusion stays off (advisor
+round 3).** The two decisions are independent and were sequenced deliberately:
+
+- **`useHmmMapMatcher = true`** changes only what is drawn — display-only, worst case the dot
+  sits on a slightly different road than the greedy snapper picked. The HMM is now tested
+  against both failure modes that matter (parallel-road, which the greedy matcher demonstrably
+  fails; turn-following, which an earlier HMM version failed), so display-only is the low-risk
+  way to see it on the real 25k-way graph. `snap()` has one caller (`RealEngine`, engine
+  thread); `RoutePlanner` shares only the read-only `RoadGraph`, so the HMM's per-instance
+  mutable hypothesis state is safe.
+- **`useMapMatchFusion` stays false** — it touches position estimation, unvalidated.
+- **`IDR-MAPFUSE` gate stats moved out of the fusion-enabled branch** so this display-only
+  drive also answers "does the 15 m gate fire often enough on the real graph" — turning one
+  drive into the data that decides the fusion flag, instead of needing a second.
+
+Full JVM suite (`core-types`, `core-nav`, `core-map`, `core-assets`, `engine`; 51 tests) +
+`:app:compileDebugKotlin` + `:app:assembleDebug` green; APK builds.
+
+**Still not done**: step 1, step 5 (real-trace validation — no data here), tunnel-portal
+landmarks. Flipping `useMapMatchFusion` on now needs: a real-drive A/B, and a check from a
+display-only `use_hmm_map_matcher` drive that `IDR-MAPFUSE` shows the gate passing on a decent
+fraction of on-road ticks (the 15 m threshold is calibrated on a toy fixture). The
+turn-following fix removed the structural blocker.
 
 ## 4. Sequencing note
 
