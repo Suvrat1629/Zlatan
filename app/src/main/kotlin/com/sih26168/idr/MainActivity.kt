@@ -119,6 +119,10 @@ class MainActivity : AppCompatActivity() {
 
         muteToggle.setOnClickListener {
             val newlyMuted = !muteToggle.isSelected
+            // Immediate tactile ack, independent of mode transitions (which need a GNSS fix
+            // first — indoors there is no edge to buzz on).
+            vibrate(if (newlyMuted) VibrationEffect.createWaveform(longArrayOf(0, 90, 80, 90), -1)
+                    else VibrationEffect.createOneShot(60, VibrationEffect.DEFAULT_AMPLITUDE))
             service?.setGnssMuted(newlyMuted)
             muteToggle.isSelected = newlyMuted
             muteToggle.text = getString(
@@ -271,20 +275,24 @@ class MainActivity : AppCompatActivity() {
 
     /** Short haptic cues on GNSS transitions — the driver's eyes are on the road (doc §13/B3).
      *  Two buzzes: signal lost, now dead-reckoning. One tick: signal back. */
-    private fun hapticForTransition(from: Mode?, to: Mode) {
-        if (from == null || from == to) return
+    private fun vibrate(effect: VibrationEffect) {
         val vibrator: Vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
         } else {
             @Suppress("DEPRECATION")
             getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
+        vibrator.vibrate(effect)
+    }
+
+    private fun hapticForTransition(from: Mode?, to: Mode) {
+        if (from == null || from == to) return
         val gnssFamily = setOf(Mode.GNSS, Mode.NAVIC)
         when {
             to == Mode.DEAD_RECKONING && from in gnssFamily ->
-                vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 90, 80, 90), -1))
+                vibrate(VibrationEffect.createWaveform(longArrayOf(0, 90, 80, 90), -1))
             to in gnssFamily && from == Mode.DEAD_RECKONING ->
-                vibrator.vibrate(VibrationEffect.createOneShot(60, VibrationEffect.DEFAULT_AMPLITUDE))
+                vibrate(VibrationEffect.createOneShot(60, VibrationEffect.DEFAULT_AMPLITUDE))
         }
     }
 
