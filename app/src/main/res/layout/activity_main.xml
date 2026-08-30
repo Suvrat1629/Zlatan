@@ -242,7 +242,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/mute_toggle"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/Widget.Material3.Button.TonalButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -250,14 +250,15 @@
                 android:minHeight="@dimen/touch_target_min"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
+                android:maxLines="1"
                 android:text="@string/gnss_mute_toggle"
                 app:icon="@drawable/ic_gnss_loss"
                 app:iconGravity="top"
-                app:iconSize="20dp" />
+                app:iconSize="22dp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/compare_toggle"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/Widget.Material3.Button.TonalButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -266,6 +267,7 @@
                 android:minHeight="@dimen/touch_target_min"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
+                android:maxLines="1"
                 android:text="@string/compare_toggle"
                 app:icon="@drawable/ic_compare"
                 app:iconGravity="top"
@@ -273,7 +275,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/record_button"
-                style="@style/Widget.Material3.Button.TonalButton"
+                style="@style/Widget.Material3.Button"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -281,10 +283,14 @@
                 android:minHeight="@dimen/touch_target_min"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
+                android:maxLines="1"
                 android:text="@string/record_trip"
+                app:backgroundTint="?attr/colorErrorContainer"
+                android:textColor="?attr/colorOnErrorContainer"
+                app:iconTint="?attr/colorOnErrorContainer"
                 app:icon="@drawable/ic_record"
                 app:iconGravity="top"
-                app:iconSize="20dp" />
+                app:iconSize="22dp" />
 
             </LinearLayout>
 
