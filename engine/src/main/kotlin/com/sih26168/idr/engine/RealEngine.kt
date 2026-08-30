@@ -242,7 +242,12 @@ class RealEngine(
         fusionFilter.predict(deadReckoned, speedMps, headingDeg, dtSeconds)
         val fused = fusionFilter.estimate()
         val matched = mapMatcher.snap(fused)
-        deadReckoner.reset(matched)
+        // Snap is DISPLAY-ONLY. Resetting the dead-reckoner to the matched point erased all
+        // cross-track motion every tick: a turn's first sideways metres got projected back
+        // onto the current road and then committed, so the dot could never reach the cross
+        // street (U-turns survived because reversing runs ALONG the same way). The reckoner
+        // keeps the true trajectory; the matcher constrains only what the user sees.
+        deadReckoner.reset(fused)
 
         publish(
             lat = matched.lat, lon = matched.lon, speedMps = speedMps, headingDeg = headingDeg.toFloat(),
