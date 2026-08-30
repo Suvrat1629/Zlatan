@@ -7,6 +7,7 @@ import com.sih26168.idr.core.nav.GyroIntegrationHeadingEstimator
 import com.sih26168.idr.core.nav.HeadingEstimator
 import com.sih26168.idr.core.nav.ModeArbiter
 import com.sih26168.idr.core.nav.PassthroughFusionFilter
+import com.sih26168.idr.core.nav.YawRate
 import com.sih26168.idr.core.map.MapMatcher
 import com.sih26168.idr.core.map.NoOpMapMatcher
 import com.sih26168.idr.core.types.EngineConfig
@@ -24,6 +25,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+
+/** Exponential settling margin for the decimator's IIR low-pass; leaves an e^-15 residual. */
+private const val WARMUP_TIME_CONSTANTS = 15.0
 
 class RealEngine(
     private val config: EngineConfig,
@@ -48,12 +52,20 @@ class RealEngine(
         modelRateHz = config.modelRateHz,
         windowSamples = PositioningEngine.WINDOW_SAMPLES,
     )
+    /** See [DecimationSpan] — one place, so the engine and its tests cannot drift apart. */
+    private val decimationSpanNanos: Long = DecimationSpan.nanosFor(config)
+
     private val deadReckoner = DeadReckoner(startAt)
     private val modeArbiter = ModeArbiter(config.gnssLostNoFixTimeoutMs)
 
     private val _state = MutableStateFlow(PositionState(lat = startAt.lat, lon = startAt.lon))
     override val state: StateFlow<PositionState> = _state.asStateFlow()
 
+    /** Physical yaw-rate bound, from config so it is tunable per vehicle class rather than baked in. */
+    private val maxYawRateRadS: Float = Math.toRadians(config.maxYawRateDps.toDouble()).toFloat()
+    private val yawClampCount = java.util.concurrent.atomic.AtomicLong(0)
+
+    @Volatile private var lastYawRateRadS = 0f
     @Volatile private var lastGyroZ = 0f
     @Volatile private var lastGnssBearingDeg = Float.NaN
     @Volatile private var lastInferenceMs = Float.NaN
@@ -156,10 +168,25 @@ class RealEngine(
     ) {
         lastGyroZ = gz
         diagnostics?.onImuSample(tNanos)
+        // Vehicle yaw is rotation about the local VERTICAL, not about the phone's z axis. Raw gz
+        // reads cos(tilt) of the true rate -- 87% at 30 degrees, 34% at 70 -- and with a fixed
+        // mount that is a systematic scale error on every turn, which the filter cannot correct
+        // because consistent under-rotation looks like real rotation. See YawRate and the heading
+        // work plan (wiki/notes/idr-heading-fix-plan.md, F1).
+        val rawYawRate = YawRate.aboutVertical(gx, gy, gz, grx, gry, grz)
+        // Physical plausibility bound (heading work plan F4a), NOT a filter. No road vehicle
+        // sustains this rate; field telemetry recorded 271 deg/s while walking, which is hand
+        // motion being integrated as vehicle rotation. A magnitude clamp cannot distort a genuine
+        // turn -- unlike the low-pass that was considered and rejected, which would smear a real
+        // turn's onset by a few hundred milliseconds and misplace the corner by metres.
+        // Clamped rather than dropped: dropping a sample leaves a hole in the integral.
+        val yawRate = rawYawRate.coerceIn(-maxYawRateRadS, maxYawRateRadS)
+        if (yawRate != rawYawRate) yawClampCount.incrementAndGet()
+        lastYawRateRadS = yawRate
         synchronized(headingAccumLock) {
             if (prevImuNanos != 0L) {
                 val dt = ((tNanos - prevImuNanos) / 1e9).coerceIn(0.0, 0.05)
-                headingAccumRad += gz * dt
+                headingAccumRad += yawRate * dt
             }
             prevImuNanos = tNanos
         }
@@ -193,7 +220,12 @@ class RealEngine(
 
     fun tickOnce() {
         val t0 = System.nanoTime()
-        val samples = ringBuffer.snapshot()
+        // Only the span the decimator will bin, not the whole ring buffer. Everything downstream
+        // (sort, dedupe, gap scan, clipping scan, decimation) is linear or worse in the sample
+        // count, and at 214 Hz the untrimmed buffer was roughly 1,700 samples reprocessed ten times
+        // a second. See RingBuffer.snapshotSince.
+        val newestTNanos = ringBuffer.newestTNanos() ?: return
+        val samples = ringBuffer.snapshotSince(newestTNanos - decimationSpanNanos)
         if (samples.isEmpty()) return
 
         val conditioned = conditioning.process(samples)
@@ -280,6 +312,10 @@ class RealEngine(
         val stationary = ZeroVelocityDetector.isStationary(
             features, config.zuptAccelThresholdMps2, config.zuptGyroThresholdRps,
         )
+
+        // A stationary vehicle cannot be rotating, so the measured yaw rate is bias by definition
+        // -- the only direct observation of it available during a blackout (heading work plan F3).
+        if (stationary) fusionFilter.updateStationaryGyro(lastYawRateRadS)
 
         val speedMps = if (deltaEstimator != null && deltaNormalizer != null && lastAnchorNanos != 0L) {
             val dvRaw = deltaEstimator.estimate(deltaNormalizer.apply(features))
@@ -401,6 +437,12 @@ class RealEngine(
                 lat = displayPos.lat,
                 lon = displayPos.lon,
                 uncertaintyM = fusionFilter.uncertaintyM(),
+                gyroBiasDps = fusionFilter.gyroBiasDps().toFloat(),
+                headingUncertaintyDeg = (fusionFilter.headingUncertaintyDeg() ?: Double.NaN).toFloat(),
+                gnssNis = fusionFilter.lastGnssNis().toFloat(),
+                yawClampCount = yawClampCount.get(),
+                mapMatchOnRoad = matchResult.onRoad,
+                mapMatchUncertaintyM = if (matchResult.onRoad) matchResult.uncertaintyM else Float.NaN,
                 inferenceMs = lastInferenceMs,
                 tickMs = (System.nanoTime() - t0) / 1_000_000f,
             )

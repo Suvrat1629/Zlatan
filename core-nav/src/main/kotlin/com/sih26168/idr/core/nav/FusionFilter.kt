@@ -37,6 +37,23 @@ interface FusionFilter {
         roadBearingDeg: Double,
     ) {}
 
+    /**
+     * Zero-velocity gyro observation: the vehicle is known to be stationary, so the measured yaw
+     * rate is the sensor's bias. Filters that track a bias state use it as a direct measurement;
+     * default no-op for those that do not.
+     */
+    fun updateStationaryGyro(measuredYawRateRadS: Float) {}
+
+    /** Normalised innovation squared of the most recent GNSS position update, or NaN if none.
+     *  Chi-square with 2 degrees of freedom: a healthy filter sits mostly below ~6. */
+    fun lastGnssNis(): Double = Double.NaN
+
+    /** GNSS fixes rejected by the innovation gate so far this session. */
+    fun gnssRejectedCount(): Long = 0L
+
+    /** Estimated yaw-rate bias in deg/s, or NaN for filters that do not track one. */
+    fun gyroBiasDps(): Double = Double.NaN
+
     fun estimate(): LatLon
 
     fun uncertaintyM(): Float

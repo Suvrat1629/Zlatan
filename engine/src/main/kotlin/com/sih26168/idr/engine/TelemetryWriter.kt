@@ -27,7 +27,7 @@ class TelemetryWriter(
     private var rows = 0
 
     init {
-        writer.write("#schema=1")
+        writer.write("#schema=2")
         writer.newLine()
         writer.write(HEADER)
         writer.newLine()
@@ -40,7 +40,10 @@ class TelemetryWriter(
                 t.tNanos, t.vModelMps, t.dvMps2, t.vOutMps, t.vGnssMps, t.blendLambda,
                 t.yawRateRadS, t.headingDeg, t.gnssBearingDeg, t.aHorizMps2,
                 if (t.stationary) 1 else 0, t.mode, t.satsInFix, t.irnssSatsInFix,
-                t.lat, t.lon, t.uncertaintyM, t.inferenceMs, t.tickMs,
+                t.lat, t.lon, t.uncertaintyM,
+                t.gyroBiasDps, t.headingUncertaintyDeg, t.gnssNis, t.yawClampCount,
+                if (t.mapMatchOnRoad) 1 else 0, t.mapMatchUncertaintyM,
+                t.inferenceMs, t.tickMs,
             ).joinToString(",")
         )
         writer.newLine()
@@ -60,7 +63,9 @@ class TelemetryWriter(
         const val HEADER =
             "t_nanos,v_model_mps,dv_mps2,v_out_mps,v_gnss_mps,blend_lambda," +
                 "yaw_rate_rad_s,heading_deg,gnss_bearing_deg,a_horiz_mps2," +
-                "stationary,mode,sats,irnss_sats,lat,lon,uncertainty_m,inference_ms,tick_ms"
+                "stationary,mode,sats,irnss_sats,lat,lon,uncertainty_m," +
+                "gyro_bias_dps,heading_unc_deg,gnss_nis,yaw_clamp_count," +
+                "map_on_road,map_unc_m,inference_ms,tick_ms"
     }
 }
 
@@ -90,6 +95,14 @@ object SummaryReport {
         appendLine("error median  ${f(s.headingErrorMedianDeg)} deg   p90 ${f(s.headingErrorP90Deg)} deg")
         appendLine("yaw consistency median ${f(s.yawConsistencyMedian)}  (a_horiz / v*omega, expect >= 1)")
         appendLine("suspected shake events ${s.suspectedShakeEvents}")
+        appendLine("yaw clamps at the physical bound ${s.yawClampCount}")
+        appendLine()
+        appendLine("-- filter --")
+        appendLine("gyro bias     ${f(s.gyroBiasFinalDps)} deg/s   stability ${f(s.gyroBiasStabilityDps)} deg/s")
+        appendLine("  (a converged bias is stable; one that keeps moving is absorbing noise)")
+        appendLine("gnss NIS      median ${f(s.gnssNisMedian)}   p90 ${f(s.gnssNisP90)}")
+        appendLine("  (chi-square 2 DOF: below ~6 is healthy. Decides if the NIS gate can reject)")
+        appendLine("map matcher   on-road ${f(s.mapMatchOnRoadPercent)}% of ticks")
         appendLine()
         appendLine("-- outages (${s.outages.size}) --")
         if (s.outages.isEmpty()) appendLine("none")

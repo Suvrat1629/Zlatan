@@ -33,6 +33,21 @@ data class TelemetryTick(
     val lat: Double,
     val lon: Double,
     val uncertaintyM: Float,
+    /** Estimated gyro yaw-rate bias, deg/s. NaN when the filter tracks no bias state.
+     *  Whether this converges to a stable value per device is the check that the bias state is
+     *  modelling bias rather than absorbing angle random walk. */
+    val gyroBiasDps: Float,
+    /** The filter's own heading 1-std, degrees. NaN when the filter tracks no heading. */
+    val headingUncertaintyDeg: Float,
+    /** Normalised innovation squared of the last GNSS position update. Chi-square, 2 DOF: a healthy
+     *  filter sits mostly below ~6. This is measured before it is ever enforced. */
+    val gnssNis: Float,
+    /** Yaw-rate samples clamped to the physical vehicle bound so far this session. */
+    val yawClampCount: Long,
+    /** Whether the map matcher found a road for this tick. */
+    val mapMatchOnRoad: Boolean,
+    /** The matcher's reported positional 1-std, metres. NaN when off-road. */
+    val mapMatchUncertaintyM: Float,
     /** Wall time spent inside the model call, milliseconds. */
     val inferenceMs: Float,
     /** Wall time for the whole engine tick, milliseconds. */
@@ -92,6 +107,17 @@ data class SessionSummary(
     /** a_horiz / (v * |omega|) during turns. Well below 1 suggests phone rotation, not vehicle. */
     val yawConsistencyMedian: Double,
     val suspectedShakeEvents: Int,
+    /** Final gyro bias estimate, deg/s, and its spread over the second half of the session. A
+     *  converged bias is stable; one that keeps moving is absorbing noise, not modelling bias. */
+    val gyroBiasFinalDps: Double,
+    val gyroBiasStabilityDps: Double,
+    /** Distribution of the GNSS innovation, which is what decides whether the NIS gate can safely
+     *  be switched from measuring to rejecting. */
+    val gnssNisMedian: Double,
+    val gnssNisP90: Double,
+    val yawClampCount: Long,
+    /** Share of ticks where the matcher found a road. */
+    val mapMatchOnRoadPercent: Double,
     val outages: List<OutageRecord>,
     val markers: List<TelemetryMarker>,
     val warnings: List<String>,
