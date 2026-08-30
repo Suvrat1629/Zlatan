@@ -296,6 +296,26 @@ class RealEngine(
         // keeps the true trajectory; the matcher constrains only what the user sees.
         deadReckoner.reset(fused)
 
+        // Road-heading correction: on a confident match, pull heading toward the road's
+        // bearing. The gyro's heading random-walk is the dominant cross-track error on long
+        // straights (Part C: 4% -> 34% with outage duration); the road geometry is the
+        // absolute reference the magnetometer failed to be. Gates: tight match only, moving
+        // (bearing meaningless when parked), and NOT turning (never fight a real turn).
+        val roadBearing = mapMatcher.matchedBearingDeg()
+        val matchDist = mapMatcher.matchedDistanceM()
+        if (roadBearing != null && matchDist != null &&
+            matchDist <= config.roadHeadingMaxDistM &&
+            speedOut > 3f &&
+            kotlin.math.abs(turnRad / dtSeconds) < config.roadHeadingMaxTurnRps
+        ) {
+            // Way direction is arbitrary: resolve the 180-degree ambiguity toward whichever
+            // end is closer to the current heading.
+            val h = headingEstimator.headingDeg()
+            val d1 = kotlin.math.abs(((roadBearing - h + 540.0) % 360.0) - 180.0)
+            val target = if (d1 <= 90.0) roadBearing else (roadBearing + 180.0).mod(360.0)
+            headingEstimator.nudgeToward(target, config.roadHeadingGain)
+        }
+
         val mode = modeArbiter.currentMode(tEndNanos)
         publish(
             lat = matched.lat, lon = matched.lon, speedMps = speedOut, headingDeg = headingDeg.toFloat(),

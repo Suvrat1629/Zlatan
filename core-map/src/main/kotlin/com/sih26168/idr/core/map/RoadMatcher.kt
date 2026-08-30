@@ -39,6 +39,8 @@ class RoadMatcher(
     private val cell: Double = cellSizeM
     private val grid = HashMap<Long, MutableList<Segment>>()
     private var lastWayId: Int = -1
+    private var lastBearingDeg: Double? = null
+    private var lastDistM: Double? = null
 
     init {
         var latSum = 0.0
@@ -73,6 +75,8 @@ class RoadMatcher(
         var bestX = 0.0
         var bestY = 0.0
         var bestWay = -1
+        var bestSeg: Segment? = null
+        var bestDist = Double.MAX_VALUE
         for (dx in -1..1) for (dy in -1..1) {
             val segs = grid[key(cx + dx, cy + dy)] ?: continue
             for (s in segs) {
@@ -85,16 +89,31 @@ class RoadMatcher(
                     bestScore = score
                     bestX = qx; bestY = qy
                     bestWay = s.wayId
+                    bestSeg = seg2(s)
+                    bestDist = d
                 }
             }
         }
         if (bestWay == -1) {
             lastWayId = -1                     // off the network: free-run, honest
+            lastBearingDeg = null
+            lastDistM = null
             return rawPosition
         }
         lastWayId = bestWay
+        bestSeg?.let {
+            // segment bearing in the local metre frame: x = east, y = north
+            lastBearingDeg = Math.toDegrees(kotlin.math.atan2(it.bx - it.ax, it.by - it.ay)).mod(360.0)
+        }
+        lastDistM = bestDist
         return toLatLon(bestX, bestY)
     }
+
+    override fun matchedBearingDeg(): Double? = lastBearingDeg
+
+    override fun matchedDistanceM(): Double? = lastDistM
+
+    private fun seg2(s: Segment): Segment = s
 
     /** Closest point on segment to (px, py). */
     private fun project(px: Double, py: Double, s: Segment): Pair<Double, Double> {

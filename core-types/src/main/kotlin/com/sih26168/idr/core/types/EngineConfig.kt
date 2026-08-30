@@ -27,6 +27,13 @@ data class EngineConfig(
     val walkingSpeedScale: Float = 0.3f,
     val walkingSpeedMaxMps: Float = 2.5f,
 
+    // Road-heading correction: when confidently on a road, pull DR heading toward the
+    // road's bearing. Kills the gyro random-walk on straights (the dominant cross-track
+    // error, Part C). Gated off while turning so it never fights a real turn.
+    val roadHeadingGain: Double = 0.08,
+    val roadHeadingMaxDistM: Double = 15.0,
+    val roadHeadingMaxTurnRps: Double = 0.15,
+
     val gnssLostNoFixTimeoutMs: Long = 3_000,
     val handoverSlewSeconds: Double = 1.5,
 
