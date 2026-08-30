@@ -24,7 +24,7 @@ import kotlin.math.hypot
 class RoadMatcher(
     ways: List<List<DoubleArray>>,
     private val maxSnapM: Double = 35.0,
-    private val stickyBonusM: Double = 12.0,
+    private val stickyBonusM: Double = 6.0,
     cellSizeM: Double = 120.0,
 ) : MapMatcher {
 

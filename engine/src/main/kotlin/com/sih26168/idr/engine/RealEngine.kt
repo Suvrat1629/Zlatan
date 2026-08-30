@@ -53,6 +53,13 @@ class RealEngine(
     override val state: StateFlow<PositionState> = _state.asStateFlow()
 
     @Volatile private var lastGyroZ = 0f
+    // Heading must integrate EVERY gyro sample: point-sampling one z-rate per 100 ms tick
+    // aliases fast turns (a 1-2 s 90-degree turn gets undercounted while a slow U-turn
+    // survives — exactly the field symptom). Accumulated on the sensor thread, drained
+    // once per tick.
+    private val headingAccumLock = Any()
+    private var headingAccumRad = 0.0
+    private var prevImuNanos = 0L
     private val pendingGnssFix = AtomicReference<GnssFixRecord?>(null)
     private val lastKnownGnssSpeedMps = AtomicReference(0f)
 
@@ -112,6 +119,13 @@ class RealEngine(
         gx: Float, gy: Float, gz: Float,
     ) {
         lastGyroZ = gz
+        synchronized(headingAccumLock) {
+            if (prevImuNanos != 0L) {
+                val dt = ((tNanos - prevImuNanos) / 1e9).coerceIn(0.0, 0.05)
+                headingAccumRad += gz * dt
+            }
+            prevImuNanos = tNanos
+        }
         ringBuffer.push(ImuSampleRecord(tNanos, ax, ay, az, grx, gry, grz, gx, gy, gz))
     }
 
@@ -188,6 +202,12 @@ class RealEngine(
         val dtSeconds = 1.0 / config.outputRateHz
         val vAbs = speedEstimator.estimate(normalized).coerceIn(config.speedMinMps, config.speedMaxMps)
 
+        // Drain the fully-integrated turn angle accumulated since the last tick and feed it
+        // to the heading estimator as an equivalent mean rate (interface unchanged).
+        val turnRad = synchronized(headingAccumLock) {
+            val a = headingAccumRad; headingAccumRad = 0.0; a
+        }
+
         // Time-varying blend (validated offline: results/blend_tv_eval.json):
         //   lam = t/(t+tau), t = seconds since last trusted GNSS anchor
         //   v   = (1-lam) * (v + dv*dt)  +  lam * vAbs
@@ -215,7 +235,7 @@ class RealEngine(
         } else {
             vAbs
         }
-        headingEstimator.predict(lastGyroZ, dtSeconds)
+        headingEstimator.predict((turnRad / dtSeconds).toFloat(), dtSeconds)
         val headingDeg = headingEstimator.headingDeg()
 
         val deadReckoned = deadReckoner.step(speedMps, headingDeg, dtSeconds)
