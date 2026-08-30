@@ -27,7 +27,7 @@ class TelemetryWriter(
     private var rows = 0
 
     init {
-        writer.write("#schema=1")
+        writer.write("#schema=2")
         writer.newLine()
         writer.write(HEADER)
         writer.newLine()
@@ -40,7 +40,7 @@ class TelemetryWriter(
                 t.tNanos, t.vModelMps, t.dvMps2, t.vOutMps, t.vGnssMps, t.blendLambda,
                 t.yawRateRadS, t.headingDeg, t.gnssBearingDeg, t.aHorizMps2,
                 if (t.stationary) 1 else 0, t.mode, t.satsInFix, t.irnssSatsInFix,
-                t.lat, t.lon, t.uncertaintyM, t.inferenceMs, t.tickMs,
+                t.lat, t.lon, t.gnssLat, t.gnssLon, t.uncertaintyM, t.inferenceMs, t.tickMs,
             ).joinToString(",")
         )
         writer.newLine()
@@ -60,7 +60,7 @@ class TelemetryWriter(
         const val HEADER =
             "t_nanos,v_model_mps,dv_mps2,v_out_mps,v_gnss_mps,blend_lambda," +
                 "yaw_rate_rad_s,heading_deg,gnss_bearing_deg,a_horiz_mps2," +
-                "stationary,mode,sats,irnss_sats,lat,lon,uncertainty_m,inference_ms,tick_ms"
+                "stationary,mode,sats,irnss_sats,lat,lon,gnss_lat,gnss_lon,uncertainty_m,inference_ms,tick_ms"
     }
 }
 

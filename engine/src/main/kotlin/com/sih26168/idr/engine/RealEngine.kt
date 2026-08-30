@@ -56,6 +56,8 @@ class RealEngine(
 
     @Volatile private var lastGyroZ = 0f
     @Volatile private var lastGnssBearingDeg = Float.NaN
+    @Volatile private var lastGnssLat = Double.NaN
+    @Volatile private var lastGnssLon = Double.NaN
     @Volatile private var lastInferenceMs = Float.NaN
     @Volatile private var lastDvMps2 = Float.NaN
     @Volatile private var lastLambda = Float.NaN
@@ -158,6 +160,8 @@ class RealEngine(
     ) {
         diagnostics?.onGnssFix(tNanos)
         lastGnssBearingDeg = bearingDeg
+        lastGnssLat = lat
+        lastGnssLon = lon
         // The first trusted fix after a blackout is the only truth we get. Hand it to
         // diagnostics with what the engine believed at that instant, before the fix is applied
         // and the belief is overwritten.
@@ -352,6 +356,8 @@ class RealEngine(
                 irnssSatsInFix = modeArbiter.irnssSatsInFix(),
                 lat = matched.lat,
                 lon = matched.lon,
+                gnssLat = lastGnssLat,
+                gnssLon = lastGnssLon,
                 uncertaintyM = fusionFilter.uncertaintyM(),
                 inferenceMs = lastInferenceMs,
                 tickMs = (System.nanoTime() - t0) / 1_000_000f,
