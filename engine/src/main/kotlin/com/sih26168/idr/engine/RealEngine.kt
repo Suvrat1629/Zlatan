@@ -339,7 +339,7 @@ class RealEngine(
                 tNanos = tEndNanos,
                 vModelMps = vAbs,
                 dvMps2 = lastDvMps2,
-                vOutMps = speedOut,
+                vOutMps = slewed,
                 vGnssMps = lastKnownGnssSpeedMps.get(),
                 blendLambda = lastLambda,
                 yawRateRadS = (turnRad / dtSeconds).toFloat(),
