@@ -66,8 +66,13 @@ class EngineService : Service() {
         super.onCreate()
         val lastKnown = lastKnownLocation()
         // Telemetry is created before the engine so the engine can be handed its diagnostics
-        // sink immediately. Diagnostics run from service start; only the CSV waits for Record.
+        // sink immediately.
         telemetry = TelemetrySession(this, EngineFactory.modelVersion(this))
+        // Keep the uploaded rows and the local CSV on the same session id. They used to be
+        // generated independently — the CSV from TelemetrySession, the cloud rows from the
+        // uploader's own clock — so a local file and its cloud copy could not be matched up.
+        telemetry.onSessionIdChanged = uploader::setSessionId
+        uploader.setSessionId(telemetry.id)
         rawEngine = EngineFactory.create(
             context = this,
             startAt = lastKnown ?: LatLon(12.9716, 77.5946),
@@ -80,7 +85,13 @@ class EngineService : Service() {
             // so a stub engine would disable telemetry with no error and no data written.
             Log.e(TAG_TEL, "engine is not RealEngine — model failed to load, telemetry disabled")
         }
-        realEngine?.setTelemetry(telemetry.diagnostics, null, uploader::onTick)
+        // Both sinks run from service start: the full-rate CSV on the phone AND the 0.5 Hz HTTP
+        // upload. The CSV used to wait for the Record button, which meant the two records covered
+        // different spans of the same drive and the local one was simply missing whenever nobody
+        // pressed Record. The upload is a sampled convenience copy for the dashboard; the local
+        // file is the lossless record, and it is the one that must never be optional.
+        telemetry.startFileCapture(currentVehicle, currentMount)
+        realEngine?.setTelemetry(telemetry.diagnostics, telemetry.telemetryWriter, uploader::onTick)
 
         createNotificationChannel()
         try {
@@ -134,9 +145,10 @@ class EngineService : Service() {
         sensorSource?.stop()
         gnssSource?.stop()
         recordingEngine.stopRecording()
-        realEngine?.setTelemetry(null, null)
-        // Write the summary even if Record was never stopped, so a killed session still
-        // leaves behind the numbers it measured.
+        // Detach the engine's sinks BEFORE closing the writer, or a tick in flight could write to
+        // a closed stream. Then write the summary even if Record was never stopped, so a killed
+        // session still leaves behind the numbers it measured.
+        realEngine?.setTelemetry(null, null, null)
         telemetry.stopFileCapture()
         uploader.close()
         recordingEngine.stop()
@@ -149,20 +161,32 @@ class EngineService : Service() {
 
     fun setGnssMuted(muted: Boolean) {
         gnssSource?.setMuted(muted)
+        realEngine?.setGnssMuted(muted)
+        // The blackout toggle is the most important instant in a controlled test and was previously
+        // recorded nowhere. A marker puts it in the session summary; the per-row `gnss_muted` column
+        // makes it recoverable from the CSV without cross-referencing timestamps.
+        telemetry.mark(if (muted) "blackout-on" else "blackout-off")
     }
 
+    /**
+     * Record controls the raw IMU trace (`trip_*.csv`) and closes off a telemetry session.
+     *
+     * It no longer gates the telemetry CSV itself — that now runs from service start alongside the
+     * upload, so a drive is never lost to nobody having pressed the button. Stopping still rolls
+     * the session: it writes the summary, starts a fresh id, and reopens the CSV under it, which
+     * keeps one session per file rather than one file per app launch.
+     */
     fun toggleRecording(): Boolean {
         if (recordingEngine.isRecording) {
             recordingEngine.stopRecording()
-            // Detach the CSV writer but keep diagnostics running: they are cheap, and a moment
-            // worth seeing should not be lost because nobody pressed Record.
-            realEngine?.setTelemetry(telemetry.diagnostics, null)
             telemetry.stopFileCapture()
+            telemetry.startFileCapture(currentVehicle, currentMount)
+            realEngine?.setTelemetry(telemetry.diagnostics, telemetry.telemetryWriter)
         } else {
             val dir = File(getExternalFilesDir(null), "traces").apply { mkdirs() }
             val name = "trip_${TRACE_TIMESTAMP_FORMAT.format(Date())}.csv"
             recordingEngine.startRecording(File(dir, name))
-            telemetry.startFileCapture(currentVehicle, currentMount)
+            telemetry.setContext(currentVehicle, currentMount)
             realEngine?.setTelemetry(telemetry.diagnostics, telemetry.telemetryWriter)
         }
         return recordingEngine.isRecording

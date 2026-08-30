@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
+import com.sih26168.idr.core.nav.ModeArbiter
 import com.sih26168.idr.core.types.PositioningEngine
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -28,10 +29,18 @@ class GnssSource(
     private val statusHandler = Handler(statusThread.looper)
     private val started = AtomicBoolean(false)
 
-    @Volatile private var satsInFix = 0
+    // ModeArbiter.SATS_UNKNOWN, not 0: the GnssStatus callback is timed independently of the
+    // location callback and has not fired yet at this point. Reporting 0 here made the mode
+    // arbiter announce DEAD_RECKONING while live fixes were being fused normally (TODO.md G5).
+    @Volatile private var satsInFix = ModeArbiter.SATS_UNKNOWN
     @Volatile private var irnssSatsInFix = 0
     @Volatile private var lastFixElapsedRealtimeNanos = 0L
     @Volatile private var lastAcceptedElapsedNanos = 0L
+
+    private val accepted = java.util.concurrent.atomic.AtomicLong(0)
+    private val rejectedForAccuracy = java.util.concurrent.atomic.AtomicLong(0)
+    private val rejectedForSatellites = java.util.concurrent.atomic.AtomicLong(0)
+    private val mutedDrops = java.util.concurrent.atomic.AtomicLong(0)
 
     private val gnssStatusCallback = object : GnssStatus.Callback() {
         override fun onSatelliteStatusChanged(status: GnssStatus) {
@@ -51,7 +60,10 @@ class GnssSource(
     private val locationListener = LocationListener { location: Location ->
         val nowElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
         lastFixElapsedRealtimeNanos = nowElapsedRealtimeNanos
-        if (gnssMuted) return@LocationListener
+        if (gnssMuted) {
+            mutedDrops.incrementAndGet()
+            return@LocationListener
+        }
 
         // Escalating accuracy gate (EngineConfig.gnssAccuracyGateM and friends): strict while
         // fixes are flowing, but once the engine has been starved past starvedAfterSeconds the
@@ -65,18 +77,31 @@ class GnssSource(
         val starved = starvedNanos > (starvedAfterSeconds * 1e9).toLong()
         val gateM = if (starved) starvedAccuracyCeilingM else accuracyGateM
         val accuracyM = if (location.hasAccuracy()) location.accuracy else null
+<<<<<<< HEAD
         if (accuracyM != null && accuracyM > gateM) {
             System.err.println("[GnssSource] rejected fix with accuracy ${accuracyM}m (multipath/poor geometry) — over ${gateM}m threshold")
+=======
+        if (accuracyM != null && accuracyM > MAX_ACCEPTABLE_ACCURACY_M) {
+            rejectedForAccuracy.incrementAndGet()
+            System.err.println("[GnssSource] rejected fix with accuracy ${accuracyM}m (multipath/poor geometry) — over ${MAX_ACCEPTABLE_ACCURACY_M}m threshold")
+>>>>>>> 021b80d (Block G and H: shake/GNSS fixes, fleet telemetry analysis, and the measurement protocol)
             return@LocationListener
         }
-        if (satsInFix in 1 until MIN_SATS_FOR_TRUST) {
-            System.err.println("[GnssSource] rejected fix with only $satsInFix satellites — under ${MIN_SATS_FOR_TRUST} sats, geometry too weak to trust (this is exactly what causes standing-still jitter)")
+        // A KNOWN count below the trust floor is weak geometry. An UNKNOWN count is not evidence
+        // of anything and must not be treated as a rejection reason.
+        if (satsInFix != ModeArbiter.SATS_UNKNOWN && satsInFix < MIN_SATS_FOR_TRUST) {
+            rejectedForSatellites.incrementAndGet()
+            System.err.println("[GnssSource] rejected fix with only $satsInFix satellites — under $MIN_SATS_FOR_TRUST sats, geometry too weak to trust (this is exactly what causes standing-still jitter)")
             return@LocationListener
         }
+<<<<<<< HEAD
         if (starved && accuracyM != null && accuracyM > accuracyGateM) {
             System.err.println("[GnssSource] accepting degraded fix (accuracy ${accuracyM}m) after ${starvedNanos / 1_000_000_000}s without an accepted fix")
         }
         lastAcceptedElapsedNanos = nowElapsedRealtimeNanos
+=======
+        accepted.incrementAndGet()
+>>>>>>> 021b80d (Block G and H: shake/GNSS fixes, fleet telemetry analysis, and the measurement protocol)
 
         engine.onGnssFix(
             tNanos = nowElapsedRealtimeNanos,
@@ -102,6 +127,17 @@ class GnssSource(
             locationListener, Looper.getMainLooper(),
         )
     }
+
+    /**
+     * Why fixes did not reach the engine, for the session summary. Without this, a rejected fix and
+     * no fix at all are indistinguishable from outside the app — which is most of what "it isn't
+     * using live GPS" turns out to mean (TODO.md G5).
+     */
+    data class FixCounts(val accepted: Long, val rejectedAccuracy: Long, val rejectedSatellites: Long, val mutedDrops: Long)
+
+    fun fixCounts() = FixCounts(
+        accepted.get(), rejectedForAccuracy.get(), rejectedForSatellites.get(), mutedDrops.get(),
+    )
 
     fun stop() {
         if (!started.compareAndSet(true, false)) return

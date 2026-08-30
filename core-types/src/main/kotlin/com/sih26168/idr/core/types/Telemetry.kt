@@ -27,6 +27,24 @@ data class TelemetryTick(
     /** Horizontal linear-acceleration magnitude from the feature window, m/s^2. */
     val aHorizMps2: Float,
     val stationary: Boolean,
+    /** Window-mean gyro rate perpendicular to gravity, rad/s — the handling detector's raw input.
+     *  Logged unconditionally so the physics-argued threshold can be replaced by a measured
+     *  distribution after the first real drive, before it is trusted any further. */
+    val tiltRateRadS: Float,
+    /** Whether the handling detector fired this tick. This is the VERDICT, independent of whether
+     *  `use_handling_gate` let it act — with the gate in measure-only mode this column is the
+     *  calibration data. */
+    val handling: Boolean,
+    /** The vehicle mode selected by the operator. Recorded because it changes the published speed
+     *  (WALK damps by `walkingSpeedScale`) and was previously unrecoverable from the data: session
+     *  20260831-035044 had to be diagnosed as a mis-set selector by inference from the speed cap
+     *  (TODO.md H8). Nobody analysing a session should have to guess whether damping was applied. */
+    val vehicleMode: VehicleMode,
+    /** True when GNSS was deliberately muted for a blackout test rather than genuinely unavailable.
+     *  Without this, a controlled probe and a real signal loss are identical in the data — both show
+     *  DEAD_RECKONING and no fixes — yet they are not equivalent tests: a mute cuts cleanly from a
+     *  good fix, real denial arrives after degraded multipath (TODO.md H10). */
+    val gnssMuted: Boolean,
     val mode: Mode,
     val satsInFix: Int,
     val irnssSatsInFix: Int,
@@ -46,7 +64,9 @@ data class TelemetryTick(
     /** Normalised innovation squared of the last GNSS position update. Chi-square, 2 DOF: a healthy
      *  filter sits mostly below ~6. This is measured before it is ever enforced. */
     val gnssNis: Float,
-    /** Yaw-rate samples clamped to the physical vehicle bound so far this session. */
+    /** Yaw-rate samples REJECTED for exceeding the physical vehicle bound so far this session
+     *  (they contribute zero rotation rather than the clamped magnitude — see TODO.md G4).
+     *  A rising count during ordinary driving means the bound is set wrong. */
     val yawClampCount: Long,
     /** Whether the map matcher found a road for this tick. */
     val mapMatchOnRoad: Boolean,

@@ -14,6 +14,26 @@ import java.io.File
  *
  * Schema version is in the header so a reader can tell what it is looking at when the columns
  * change, which they will.
+ *
+ * Version 3 is the union of two independent "schema 2"s that shipped on different branches -- the
+ * GNSS reference position, and the filter/heading diagnostics. Bumped rather than reusing 2, since
+ * two different column sets under one version number is worse than no version number at all.
+ *
+ *
+ * Version 3 is the union of two independent "schema 2"s that shipped on different branches -- the
+ * GNSS reference position, and the filter/heading diagnostics. Bumped rather than reusing 2, since
+ * two different column sets under one version number is worse than no version number at all.
+ *
+ * Version 4 adds the handling detector's raw input and verdict (`tilt_rate_rps`, `handling`). The
+ * threshold that gate uses is argued from vehicle physics rather than measured, so the column is
+ * what lets the first real drive replace the argument with a distribution.
+ *
+ * Version 5 adds `vehicle_mode`. WALK damps the published speed, so without this column a reader
+ * cannot tell whether damping was applied — which is how session 20260831-035044's mis-set selector
+ * had to be inferred from the speed cap rather than simply read.
+ *
+ * Version 6 adds `gnss_muted`, so a deliberate blackout probe is distinguishable from real signal
+ * loss — they are otherwise identical in the data, and they are not equivalent tests.
  */
 class TelemetryWriter(
     private val writer: BufferedWriter,
@@ -27,7 +47,7 @@ class TelemetryWriter(
     private var rows = 0
 
     init {
-        writer.write("#schema=2")
+        writer.write("#schema=6")
         writer.newLine()
         writer.write(HEADER)
         writer.newLine()
@@ -39,7 +59,8 @@ class TelemetryWriter(
             listOf(
                 t.tNanos, t.vModelMps, t.dvMps2, t.vOutMps, t.vGnssMps, t.blendLambda,
                 t.yawRateRadS, t.headingDeg, t.gnssBearingDeg, t.aHorizMps2,
-                if (t.stationary) 1 else 0, t.mode, t.satsInFix, t.irnssSatsInFix,
+                if (t.stationary) 1 else 0, t.tiltRateRadS, if (t.handling) 1 else 0,
+                t.vehicleMode, if (t.gnssMuted) 1 else 0, t.mode, t.satsInFix, t.irnssSatsInFix,
                 t.lat, t.lon, t.gnssLat, t.gnssLon, t.uncertaintyM,
                 t.gyroBiasDps, t.headingUncertaintyDeg, t.gnssNis, t.yawClampCount,
                 if (t.mapMatchOnRoad) 1 else 0, t.mapMatchUncertaintyM,
@@ -63,7 +84,7 @@ class TelemetryWriter(
         const val HEADER =
             "t_nanos,v_model_mps,dv_mps2,v_out_mps,v_gnss_mps,blend_lambda," +
                 "yaw_rate_rad_s,heading_deg,gnss_bearing_deg,a_horiz_mps2," +
-                "stationary,mode,sats,irnss_sats,lat,lon,gnss_lat,gnss_lon,uncertainty_m," +
+                "stationary,tilt_rate_rps,handling,vehicle_mode,gnss_muted,mode,sats,irnss_sats,lat,lon,gnss_lat,gnss_lon,uncertainty_m," +
                 "gyro_bias_dps,heading_unc_deg,gnss_nis,yaw_clamp_count," +
                 "map_on_road,map_unc_m,inference_ms,tick_ms"
     }

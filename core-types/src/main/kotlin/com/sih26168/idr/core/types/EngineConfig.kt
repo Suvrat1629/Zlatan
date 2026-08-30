@@ -15,12 +15,91 @@ data class EngineConfig(
     val speedMinMps: Float = 0f,
     val speedMaxMps: Float = 60f,
 
-    // Time-varying blend gain timescale: lam = t/(t+tau), t = seconds since GNSS anchor.
+    /**
+     * Time-varying blend gain timescale: lam = t/(t+tau), t = seconds since GNSS anchor.
+     *
+     * 240 is the value `sih-26168-model/results/blend_tv_eval.json` was evaluated at, and it is the
+     * only value backed by evidence. It was raised to 1200 in the shipped config on 2026-08-30 to
+     * suppress an out-of-domain misfire from speed model v1 ("30-35 km/h at true 5"), and reverted
+     * on 2026-08-31 once v2 -- fine-tuned with not-driving negatives -- replaced it.
+     *
+     * Why the raise was harmful, so it is not repeated: at tau = 1200, sixty seconds into a
+     * blackout the absolute model carries under 5% of the answer and the rest is an unbounded open
+     * integral of the delta model with nothing to anchor it. That is what let a shaken phone
+     * accumulate speed without bound. If the absolute model misbehaves again, fix the model or gate
+     * its input -- do not turn it down. See TODO.md G3.
+     */
     val blendTauSeconds: Double = 240.0,
 
     // ZUPT: below BOTH thresholds over a window, speed is clamped to 0 instantly.
     val zuptAccelThresholdMps2: Float = 0.8f,
     val zuptGyroThresholdRps: Float = 0.15f,
+
+    // --- handling detection (TODO.md G1) ---
+    // ZUPT above is a floor test: it can say "definitely not moving", never "definitely not
+    // travelling". Shaking the phone exceeds both its thresholds, disabling the very mechanism
+    // that would pin speed to zero. HandlingDetector supplies the missing ceiling, using the gyro
+    // component PERPENDICULAR to gravity -- the orthogonal complement of the yaw projection, so it
+    // cannot suppress a genuine turn however sharp.
+    /**
+     * Mean tilt rate above which the device is treated as being handled rather than transported,
+     * rad/s. 0.44 rad/s is 25 deg/s.
+     *
+     * Argued from vehicle physics, not fitted: a car body's sustained pitch and roll rates are a
+     * few deg/s, and a speed bump or pothole is a brief transient that a window mean absorbs. Hand
+     * motion sits an order of magnitude above this -- field telemetry recorded 271 deg/s of raw
+     * rotation while walking. 25 deg/s sits in the empty band between the two, deliberately closer
+     * to the vehicle side so that a false positive needs genuinely violent motion.
+     *
+     * Telemetry logs the raw tilt rate every tick so this can be replaced with a measured
+     * distribution after the first real drive, exactly as the map-match and NIS gates are being
+     * calibrated. Until then, treat it as a bound rather than a tuned value.
+     *
+     * MEASURED LIMITATION, 2026-08-31 (TODO.md H4). Against ~14,000 rows of uploaded fleet
+     * telemetry, a gate at this value would catch only about 18% of the rows where the engine
+     * published speed while GNSS reported standstill. Those rows have a median rotation of 5 deg/s
+     * -- they are a phone being carried or set down, not shaken, and they sit in the band between
+     * ZUPT's floor and anything a rotation bound can see. Horizontal acceleration separates them
+     * far more cleanly than rotation does.
+     *
+     * The value is NOT being lowered to chase that, for two reasons. The measurement uses yaw rate,
+     * the only rotation channel the cloud schema carries, which is a proxy for the tilt rate this
+     * gate actually reads. And there is still no vehicle data to check false positives against --
+     * a false positive while driving holds speed and freezes heading, which is far more damaging
+     * than the phantom it would prevent. Tightening a safety gate against pedestrian data, for a
+     * system meant to run in vehicles, is how a bound stops being a bound.
+     *
+     * So: this gate is a partial fix, knowingly. The rest of that band is a transport-mode problem
+     * (TODO.md E5), not a rotation-threshold problem.
+     */
+    val handlingTiltRateThresholdRps: Float = 0.44f,
+    /**
+     * Whether the handling gate ACTS, as opposed to only being measured.
+     *
+     * Off by default, deliberately, and for the same reason as [useGnssNisGate] and
+     * [useMapMatchFusion]: the gate has never seen a vehicle. Its threshold is argued from physics,
+     * and the only data available (pedestrian, TODO.md H4) says it is set too high for that domain
+     * -- but says nothing at all about the false-positive side, which is the side that matters. A
+     * false positive while driving holds speed and freezes heading, so a gate that misfires on the
+     * first measurement drive would corrupt the very data the drive exists to produce, and would do
+     * it in a way that reads as a model failure rather than a gate failure.
+     *
+     * So: compute the tilt rate and the verdict from day one, ship both in telemetry, and switch
+     * this on once a real drive -- hard turns, potholes, a passenger picking the phone up -- shows
+     * what the distribution actually looks like. Same collect-statistics-before-acting pattern the
+     * NIS and map-match gates already follow.
+     */
+    val useHandlingGate: Boolean = false,
+    /**
+     * How long the engine may coast on a held speed and frozen heading before it resumes normal
+     * processing regardless, seconds.
+     *
+     * Coasting is the right response to a corrupted measurement -- it asserts nothing -- but it is
+     * open-loop and unobservable, so it cannot be allowed to run indefinitely. If handling persists
+     * past this, the device is probably being carried rather than shaken, and stale coasting is
+     * worse than a noisy estimate. The engine says so in telemetry when this fires.
+     */
+    val handlingMaxCoastSeconds: Double = 10.0,
 
     // WALK mode damping: published speed = min(speed * scale, cap). Car-trained models
     // misread gait as vehicle speed; this keeps walking display in a sane band.

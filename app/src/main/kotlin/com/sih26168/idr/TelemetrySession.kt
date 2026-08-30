@@ -23,6 +23,15 @@ import java.util.Locale
  *  1. `adb logcat -s IDR-TEL` — one line a second, live, no files involved.
  *  2. `summary_*.txt` — a few hundred bytes, pasteable into a message.
  *  3. `trip_*.csv` + `tel_*.csv` — the full record, for offline replay and model training.
+ *
+ * Two sinks run in parallel from service start: this full-rate local CSV, and the 0.5 Hz HTTP
+ * upload in [TelemetryUploader]. They are not alternatives. The upload is a sampled convenience
+ * copy that makes a drive visible on the dashboard within seconds; the local file is the lossless
+ * record and the only one suitable for replay or training. The local CSV used to wait for the
+ * Record button while the upload ran regardless, so the two covered different spans of the same
+ * drive and the local — more valuable — copy was simply missing whenever nobody pressed Record.
+ *
+ * Both carry the same [id], so a local file and its cloud rows can be joined.
  */
 class TelemetrySession(
     private val context: Context,
@@ -36,8 +45,18 @@ class TelemetrySession(
     val diagnostics: Diagnostics get() = diag
     val telemetryWriter: TelemetryWriter? get() = writer
 
+    /** The id shared by the local CSV filenames and the uploaded rows, so a session recorded in
+     *  both places can be joined. They used to be generated independently — the CSV from this
+     *  class, the cloud rows from [TelemetryUploader]'s own clock — which made a local file and its
+     *  cloud copy impossible to match up. */
+    val id: String get() = sessionId
+
+    /** Notified whenever a new session starts, so the uploader can follow the same id. */
+    var onSessionIdChanged: ((String) -> Unit)? = null
+
     private fun newDiagnostics(): Diagnostics {
         sessionId = STAMP.format(Date())
+        onSessionIdChanged?.invoke(sessionId)
         return Diagnostics(
             sessionId = sessionId,
             deviceModel = "${Build.MANUFACTURER} ${Build.MODEL} (SDK ${Build.VERSION.SDK_INT})",
@@ -54,8 +73,14 @@ class TelemetrySession(
                    else "capture $sessionId: shared storage unavailable, diagnostics only")
     }
 
-    /** Closes the CSV, writes the summary, starts a fresh session. */
+    /**
+     * Closes the CSV, writes the summary, starts a fresh session.
+     *
+     * A no-op when no capture is open. Both `onDestroy` and the Record button can reach this, and
+     * without the guard the second call would write a summary for a session that recorded nothing.
+     */
     fun stopFileCapture() {
+        if (writer == null) return
         writer?.close(); writer = null
         val text = SummaryReport.render(diag.summary())
         SharedStorage.openForWrite(context, "summary_$sessionId.txt", "text/plain")
@@ -63,6 +88,9 @@ class TelemetrySession(
         text.lineSequence().forEach { Log.i(TAG, it) }
         diag = newDiagnostics()
     }
+
+    /** Vehicle/mount for the summary header, settable without reopening the CSV. */
+    fun setContext(vehicle: String, mount: String) = diag.setContext(vehicle, mount)
 
     fun mark(label: String, note: String = "") {
         diag?.addMarker(TelemetryMarker(System.nanoTime(), label, note))

@@ -94,7 +94,15 @@ class RealEngine(
     // once per tick.
     private val headingAccumLock = Any()
     private var headingAccumRad = 0.0
+    private var tiltRateAccumRadS = 0.0
+    private var tiltRateAccumSeconds = 0.0
     private var prevImuNanos = 0L
+    @Volatile private var lastTiltRateRadS = 0f
+    @Volatile private var handling = false
+    @Volatile private var handlingDetected = false
+    private var handlingSinceNanos = 0L
+    private var handlingEpisodeExpired = false
+    private val handlingTickCount = java.util.concurrent.atomic.AtomicLong(0)
     private val pendingGnssFix = AtomicReference<GnssFixRecord?>(null)
     private val lastKnownGnssSpeedMps = AtomicReference(0f)
 
@@ -102,6 +110,7 @@ class RealEngine(
     // to a trusted GNSS speed. 0L = never anchored (e.g. indoors since launch).
     @Volatile private var blendSpeedMps = 0f
     private var blendLogCounter = 0
+    private var handlingLogCounter = 0
     @Volatile private var lastAnchorNanos = 0L
     @Volatile private var lastPublishedSpeedMps = 0f
 
@@ -109,6 +118,18 @@ class RealEngine(
     @Volatile private var vehicleMode: VehicleMode = VehicleMode.CAR
 
     fun setVehicleMode(mode: VehicleMode) { vehicleMode = mode }
+
+    /**
+     * Whether GNSS is being deliberately muted for a blackout test, as opposed to genuinely lost.
+     *
+     * Recorded on every row because the two are otherwise indistinguishable in the data: both put
+     * the arbiter in DEAD_RECKONING and both stop the fixes. Analysing session 20260831-035044 it
+     * was impossible to tell whether its seven outages were deliberate probes or real signal loss,
+     * which changes what the numbers mean -- a deliberate mute cuts cleanly from a good fix, while
+     * real denial is preceded by degraded multipath. See TODO.md H10.
+     */
+    @Volatile private var gnssMuted = false
+    fun setGnssMuted(muted: Boolean) { gnssMuted = muted }
 
     // Online delta-bias calibration (doc §14: "online recalibration against GNSS").
     // Field logs showed the delta model carries a device/domain-specific positive bias
@@ -186,17 +207,37 @@ class RealEngine(
         val rawYawRate = YawRate.aboutVertical(gx, gy, gz, grx, gry, grz)
         // Physical plausibility bound (heading work plan F4a), NOT a filter. No road vehicle
         // sustains this rate; field telemetry recorded 271 deg/s while walking, which is hand
-        // motion being integrated as vehicle rotation. A magnitude clamp cannot distort a genuine
-        // turn -- unlike the low-pass that was considered and rejected, which would smear a real
-        // turn's onset by a few hundred milliseconds and misplace the corner by metres.
-        // Clamped rather than dropped: dropping a sample leaves a hole in the integral.
-        val yawRate = rawYawRate.coerceIn(-maxYawRateRadS, maxYawRateRadS)
-        if (yawRate != rawYawRate) yawClampCount.incrementAndGet()
+        // motion being integrated as vehicle rotation. Unlike the low-pass that was considered and
+        // rejected, a magnitude bound cannot smear a genuine turn's onset.
+        //
+        // REJECTED, not clamped, and the difference matters (TODO.md G4). This originally clamped,
+        // reasoning that "dropping a sample leaves a hole in the integral". That is wrong for this
+        // bound, and the error is in the sign rather than the magnitude: a hand shake is near
+        // zero-mean in ANGLE but strongly asymmetric in RATE -- a fast flick out and a slow drift
+        // back. Clamping truncates the fast half and passes the slow half through whole, so the
+        // integral stops cancelling and a symmetric-in-angle shake is RECTIFIED into a net
+        // rotation. The clamp did not merely fail to help; it manufactured the heading error.
+        //
+        // Contributing zero is symmetric by construction, so no rate profile can rectify. It is
+        // also what the bound's own premise implies: if a sample above the bound is not vehicle
+        // rotation, integrating the bound's worth of it anyway is incoherent. A genuine vehicle
+        // turn never approaches 90 deg/s, so nothing real is lost -- and a rising reject count is
+        // the signal that the bound itself is set wrong.
+        val outOfBound = kotlin.math.abs(rawYawRate) > maxYawRateRadS
+        val yawRate = if (outOfBound) 0f else rawYawRate
+        if (outOfBound) yawClampCount.incrementAndGet()
+
+        // Tilt rate: the gyro component PERPENDICULAR to gravity, i.e. everything the yaw
+        // projection above discards. Accumulated as a time-weighted mean over the tick so the
+        // handling gate reads a window statistic and a single pothole cannot trip it.
+        val tiltRate = HandlingDetector.tiltRate(gx, gy, gz, grx, gry, grz)
         lastYawRateRadS = yawRate
         synchronized(headingAccumLock) {
             if (prevImuNanos != 0L) {
                 val dt = ((tNanos - prevImuNanos) / 1e9).coerceIn(0.0, 0.05)
                 headingAccumRad += yawRate * dt
+                tiltRateAccumRadS += tiltRate * dt
+                tiltRateAccumSeconds += dt
             }
             prevImuNanos = tNanos
         }
@@ -311,6 +352,57 @@ class RealEngine(
         val turnRad = synchronized(headingAccumLock) {
             val a = headingAccumRad; headingAccumRad = 0.0; a
         }
+        // Time-weighted mean tilt rate over the tick, drained under the same lock discipline.
+        val meanTiltRateRadS = synchronized(headingAccumLock) {
+            val sum = tiltRateAccumRadS; val secs = tiltRateAccumSeconds
+            tiltRateAccumRadS = 0.0; tiltRateAccumSeconds = 0.0
+            if (secs > 0.0) (sum / secs).toFloat() else 0f
+        }
+        lastTiltRateRadS = meanTiltRateRadS
+
+        // Handling gate (TODO.md G1): ZUPT's missing ceiling. A vehicle body cannot sustain rapid
+        // rotation about its horizontal axes; a hand does nothing else. Because this reads the
+        // component orthogonal to the yaw projection, a genuine turn -- however sharp -- cannot
+        // trip it. On detection the engine COASTS: it holds the last speed and freezes heading
+        // integration rather than asserting a value it has no evidence for. Forcing zero would be
+        // wrong for a passenger picking up their phone at 60 km/h.
+        val handlingNow = HandlingDetector.isHandling(meanTiltRateRadS, config.handlingTiltRateThresholdRps)
+        if (!handlingNow) {
+            // Episode over: clear both the timer and the expiry latch so the next episode gets a
+            // full coast allowance of its own.
+            handlingSinceNanos = 0L
+            handlingEpisodeExpired = false
+        } else if (handlingSinceNanos == 0L) {
+            handlingSinceNanos = tEndNanos
+        }
+        // Coasting is open-loop and unobservable, so it is bounded. Past the limit the device is
+        // more likely being carried than shaken, and a stale held speed is worse than a noisy one.
+        //
+        // The latch matters: without it, expiry clears `handling`, the next tick sees handling
+        // start afresh, the timer restarts, and the engine re-enters coasting every limit period
+        // forever. The bound has to apply to the EPISODE, not to each unbroken run of ticks.
+        val coastSeconds = if (handlingSinceNanos == 0L) 0.0 else (tEndNanos - handlingSinceNanos) / 1e9
+        if (handlingNow && coastSeconds > config.handlingMaxCoastSeconds) handlingEpisodeExpired = true
+        val coastExpired = handlingNow && handlingEpisodeExpired
+        // `handlingDetected` is the verdict and is always measured; `handling` is whether the
+        // engine ACTS on it. Splitting them is what lets the first vehicle drive calibrate the
+        // threshold without the gate being able to corrupt that same drive (TODO.md H9).
+        handlingDetected = handlingNow && !coastExpired
+        handling = config.useHandlingGate && handlingDetected
+        if (handling) handlingTickCount.incrementAndGet()
+        if (handlingDetected && !config.useHandlingGate && handlingLogCounter % 20 == 0) {
+            System.out.println(
+                "IDR-HANDLING detected (tilt ${"%.0f".format(Math.toDegrees(meanTiltRateRadS.toDouble()))} deg/s) " +
+                    "— measure-only, not acting (config.use_handling_gate=false)"
+            )
+        }
+        if (coastExpired && handlingLogCounter++ % 20 == 0) {
+            System.err.println(
+                "[RealEngine] handling persisted past ${config.handlingMaxCoastSeconds}s " +
+                    "(tilt ${"%.0f".format(Math.toDegrees(meanTiltRateRadS.toDouble()))} deg/s) — " +
+                    "resuming normal processing; the device is probably being carried, not shaken"
+            )
+        }
 
         // Time-varying blend (validated offline: results/blend_tv_eval.json):
         //   lam = t/(t+tau), t = seconds since last trusted GNSS anchor
@@ -332,16 +424,29 @@ class RealEngine(
         val speedMps = if (deltaEstimator != null && deltaNormalizer != null && lastAnchorNanos != 0L) {
             val dvRaw = deltaEstimator.estimate(deltaNormalizer.apply(features))
                 .coerceIn(-4f, 4f)                    // physical sanity: > 0.4 g is not a car
-            dvSumSinceFix += dvRaw
-            dvCountSinceFix++
+            // Handling corrupts the delta model's input as thoroughly as the absolute model's, so
+            // its output must not reach the GNSS-referenced bias estimator either -- that average
+            // is compared against a real observed speed change, and feeding hand motion into it
+            // would poison a correction that persists long after the shake ends.
+            if (!handling) {
+                dvSumSinceFix += dvRaw
+                dvCountSinceFix++
+            }
             val dv = dvRaw - dvBiasMps2               // online bias correction (learned vs GNSS)
             lastDvMps2 = dv
             val tSec = ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
             val lam = (tSec / (tSec + config.blendTauSeconds)).toFloat()
             lastLambda = lam
-            blendSpeedMps = if (stationary) 0f else
-                ((1f - lam) * (blendSpeedMps + dv * dtSeconds.toFloat()) + lam * vAbs)
+            // Hold the blend's INTERNAL state too, not just the published output. Letting it keep
+            // integrating while the published speed is held would hide the garbage rather than
+            // reject it: the accumulated error would spring back into view the moment handling
+            // ended. The hold has to reach the state, or it is only a display filter.
+            blendSpeedMps = when {
+                handling -> blendSpeedMps
+                stationary -> 0f
+                else -> ((1f - lam) * (blendSpeedMps + dv * dtSeconds.toFloat()) + lam * vAbs)
                     .coerceIn(config.speedMinMps, config.speedMaxMps)
+            }
             if (blendLogCounter++ % 20 == 0) {
                 System.out.println(
                     "IDR-BLEND vAbs=${"%.1f".format(vAbs * 3.6f)}km/h dvRaw=${"%.2f".format(dvRaw)} " +
@@ -360,17 +465,32 @@ class RealEngine(
             (speedMps * config.walkingSpeedScale).coerceAtMost(config.walkingSpeedMaxMps)
         else speedMps
 
+        // Speed hold while handling (TODO.md G1). The model's input window is dominated by hand
+        // motion, so its output carries no information about vehicle speed -- and measurably so:
+        // fed a synthetic shaken-stationary window, the shipped model returns a confident
+        // three-figure km/h. Holding the last published value is the standard INS response to a
+        // corrupted measurement. If the vehicle was genuinely stationary, ZUPT had already driven
+        // this to 0 before the shake began and holding keeps it there, which is the reported
+        // symptom resolved. If it was moving, coasting is right and zeroing would be a fabrication.
+        val held = if (handling) lastPublishedSpeedMps else speedOut
+
         // Physical slew limit: a ground vehicle cannot gain more than ~4 m/s^2 or shed more
         // than ~12 m/s^2. Without this, shaking the phone spikes the model to absurd speeds
         // (field: 160 km/h while standing still). ZUPT's instant zero survives because a
         // drop is allowed 12 m/s^2, reaching 0 from city speeds within a couple of ticks.
         val dtF = dtSeconds.toFloat()
-        val slewed = speedOut.coerceIn(
+        val slewed = held.coerceIn(
             lastPublishedSpeedMps - config.maxSpeedDropMps2 * dtF,
             lastPublishedSpeedMps + config.maxSpeedRiseMps2 * dtF,
         ).coerceAtLeast(0f)
         lastPublishedSpeedMps = slewed
-        headingEstimator.predict((turnRad / dtSeconds).toFloat(), dtSeconds)
+        // While handling, the gyro is measuring a hand rather than a vehicle, so the accumulated
+        // rotation is not vehicle heading change. Nothing is a better estimate of vehicle heading
+        // right now than the heading from just before the handling began -- so freeze, do not
+        // integrate. The accumulator was already drained above, so this discards it rather than
+        // deferring it to the next tick.
+        val turnRadUsed = if (handling) 0.0 else turnRad
+        headingEstimator.predict((turnRadUsed / dtSeconds).toFloat(), dtSeconds)
         val headingDeg = headingEstimator.headingDeg()
 
         val deadReckoned = deadReckoner.step(slewed, headingDeg, dtSeconds)
@@ -474,6 +594,12 @@ class RealEngine(
                 gnssBearingDeg = lastGnssBearingDeg,
                 aHorizMps2 = features.last()[0],          // channel 0 is a_horiz
                 stationary = stationary,
+                tiltRateRadS = lastTiltRateRadS,
+                // The verdict, not whether it was acted on -- with the gate in measure-only mode
+                // this column is the whole point, and reporting `handling` would log all false.
+                handling = handlingDetected,
+                vehicleMode = vehicleMode,
+                gnssMuted = gnssMuted,
                 mode = mode,
                 satsInFix = modeArbiter.satsInFix(),
                 irnssSatsInFix = modeArbiter.irnssSatsInFix(),
