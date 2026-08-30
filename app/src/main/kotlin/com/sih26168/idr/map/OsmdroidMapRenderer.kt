@@ -18,6 +18,9 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.Polyline
+import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.views.overlay.MapEventsOverlay
+import com.sih26168.idr.core.types.LatLon
 import java.io.File
 
 class OsmdroidMapRenderer(context: Context) : MapRenderer {
@@ -122,6 +125,21 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
     private var currentSegmentIsGnss: Boolean? = null
     private var lastMode: Mode = Mode.INIT
 
+    private val routeLine = Polyline(mapView).apply {
+        outlinePaint.strokeWidth = 14f
+        outlinePaint.color = 0x883D5AFE.toInt()      // translucent indigo, under the trails
+    }
+
+    private var longPressListener: ((Double, Double) -> Unit)? = null
+    private val eventsOverlay = MapEventsOverlay(object : MapEventsReceiver {
+        override fun singleTapConfirmedHelper(p: GeoPoint?): Boolean = false
+        override fun longPressHelper(p: GeoPoint?): Boolean {
+            p ?: return false
+            longPressListener?.invoke(p.latitude, p.longitude)
+            return true
+        }
+    })
+
     private val plainGpsTrail = Polyline(mapView).apply {
         outlinePaint.strokeWidth = dp(2.5f)
         outlinePaint.color = 0xFF9E9E9E.toInt()
@@ -135,6 +153,8 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
     override fun attach(container: ViewGroup) {
         container.removeAllViews()
         container.addView(mapView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        mapView.overlays.add(eventsOverlay)
+        mapView.overlays.add(routeLine)
         mapView.overlays.add(plainGpsTrail)
         mapView.overlays.add(uncertaintyCircle)
         mapView.overlays.add(vehicleMarker)
@@ -226,6 +246,15 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
         } else {
             mapView.controller.animateTo(point)
         }
+    }
+
+    override fun showRoute(points: List<LatLon>) {
+        routeLine.setPoints(points.map { GeoPoint(it.lat, it.lon) })
+        mapView.invalidate()
+    }
+
+    override fun setOnMapLongPress(listener: ((Double, Double) -> Unit)?) {
+        longPressListener = listener
     }
 
     companion object {

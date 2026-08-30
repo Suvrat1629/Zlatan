@@ -31,6 +31,8 @@ import com.sih26168.idr.core.types.Geo
 import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.Mode
 import com.sih26168.idr.core.types.VehicleMode
+import android.widget.Toast
+import kotlin.concurrent.thread
 import com.google.android.material.button.MaterialButtonToggleGroup
 import android.text.SpannableString
 import android.text.Spanned
@@ -65,6 +67,7 @@ class MainActivity : AppCompatActivity() {
     private var blackoutStartPosition: LatLon? = null
     private var blackoutDistanceM = 0.0
     private var lastMode: Mode? = null
+    @Volatile private var lastPosition: LatLon? = null
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -141,6 +144,26 @@ class MainActivity : AppCompatActivity() {
                 }
                 service?.setVehicleMode(mode)
             }
+
+        mapRenderer.setOnMapLongPress { lat, lon ->
+            val from = lastPosition
+            if (from == null) {
+                Toast.makeText(this, "No position yet — wait for a fix", Toast.LENGTH_SHORT).show()
+                return@setOnMapLongPress
+            }
+            Toast.makeText(this, "Planning route…", Toast.LENGTH_SHORT).show()
+            thread {
+                val planner = RoadsLoader.planner(this)
+                val path = planner?.route(from, LatLon(lat, lon))
+                runOnUiThread {
+                    if (path == null) {
+                        Toast.makeText(this, "No road route found", Toast.LENGTH_SHORT).show()
+                    } else {
+                        mapRenderer.showRoute(path)
+                    }
+                }
+            }
+        }
         findViewById<ImageButton>(R.id.calibrate_compass_button).setOnClickListener {
             startActivity(Intent(this, MagnetometerCalibrationActivity::class.java))
         }
@@ -201,6 +224,7 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     service?.engine?.state?.collect { s ->
                         positionInterpolator.push(s.lat, s.lon, s.headingDeg)
+                        lastPosition = LatLon(s.lat, s.lon)
                         latestUncertaintyM = s.uncertaintyM
                         mapRenderer.appendTrailPoint(s.lat, s.lon, s.mode)
                         if (mapRenderer.isGnssFamily(s.mode)) {

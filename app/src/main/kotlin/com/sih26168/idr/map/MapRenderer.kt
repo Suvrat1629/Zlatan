@@ -17,6 +17,12 @@ interface MapRenderer {
 
     fun appendPlainGpsPoint(lat: Double, lon: Double)
 
+    /** Draw (or replace) the planned route polyline. Empty list clears it. */
+    fun showRoute(points: List<com.sih26168.idr.core.types.LatLon>)
+
+    /** Long-press callback for destination picking (lat, lon). */
+    fun setOnMapLongPress(listener: ((Double, Double) -> Unit)?)
+
     fun setCompareMode(enabled: Boolean)
 
     fun recenter()
