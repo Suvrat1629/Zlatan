@@ -153,6 +153,64 @@ class MagnetometerCalibratorTest {
     }
 
     @Test
+    fun coverageGridFillsInForWellDistributedSamples() {
+        val calibrator = MagnetometerCalibrator()
+        val gridEmpty = calibrator.coverageGrid
+        assertTrue(gridEmpty.none { it }, "grid should start fully empty")
+
+        sphereDirections(500).forEach { (dx, dy, dz) ->
+            calibrator.addSample((5.0 + 40.0 * dx).toFloat(), (5.0 + 40.0 * dy).toFloat(), (5.0 + 40.0 * dz).toFloat())
+        }
+        val gridFull = calibrator.coverageGrid
+        val cols = MagnetometerCalibrator.GRID_AZIMUTH_BINS
+        val rows = MagnetometerCalibrator.GRID_ELEVATION_BINS
+        assertEquals(cols * rows, gridFull.size)
+
+        // Equal-angle elevation bins cover unequal solid angle (polar rows are naturally
+        // sparser even for a perfectly-covered sphere), so a loose "over half the cells"
+        // check can't tell good coverage from mediocre. Check the equatorial rows
+        // specifically, which shouldn't have that bias — a well-distributed sphere should
+        // fill nearly every azimuth bin there.
+        val equatorRows = listOf(rows / 2 - 1, rows / 2)
+        for (row in equatorRows) {
+            val filledInRow = (0 until cols).count { col -> gridFull[row * cols + col] }
+            assertTrue(
+                filledInRow >= cols - 1,
+                "expected equatorial row $row nearly fully covered, got $filledInRow/$cols",
+            )
+        }
+    }
+
+    @Test
+    fun coverageGridDoesNotAffectTheOctantGateOrIsGoodEnough() {
+        // coverageGrid is purely a visualization aid — the pass/fail decision must come from
+        // coverageFraction/isGoodEnough alone, computed identically whether or not anyone
+        // ever reads the grid.
+        val calibrator = MagnetometerCalibrator()
+        sphereDirections(500).forEach { (dx, dy, dz) ->
+            calibrator.addSample((5.0 + 40.0 * dx).toFloat(), (-2.0 + 40.0 * dy).toFloat(), (3.0 + 40.0 * dz).toFloat())
+        }
+        val coverageBefore = calibrator.coverageFraction
+        val goodEnoughBefore = calibrator.isGoodEnough
+
+        calibrator.coverageGrid // read it, as the UI would every refresh
+
+        assertEquals(coverageBefore, calibrator.coverageFraction)
+        assertEquals(goodEnoughBefore, calibrator.isGoodEnough)
+    }
+
+    @Test
+    fun coverageGridStaysMostlyEmptyForClusteredSamples() {
+        val calibrator = MagnetometerCalibrator()
+        repeat(500) { i ->
+            val jitter = (i % 5) * 0.01f
+            calibrator.addSample(40f + jitter, 5f + jitter, 3f + jitter)
+        }
+        val filledCount = calibrator.coverageGrid.count { it }
+        assertTrue(filledCount <= 1, "expected a stationary cluster to fill at most one grid cell, got $filledCount")
+    }
+
+    @Test
     fun resetClearsEverything() {
         val calibrator = MagnetometerCalibrator()
         sphereDirections(200).forEach { (dx, dy, dz) -> calibrator.addSample((40 * dx).toFloat(), (40 * dy).toFloat(), (40 * dz).toFloat()) }
@@ -160,6 +218,7 @@ class MagnetometerCalibratorTest {
         calibrator.reset()
         assertEquals(0, calibrator.samplesCollected)
         assertEquals(0f, calibrator.coverageFraction)
+        assertTrue(calibrator.coverageGrid.none { it })
         assertFalse(calibrator.isGoodEnough)
     }
 

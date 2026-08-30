@@ -29,6 +29,7 @@
     <string name="calibration_consistency_label">Consistency</string>
     <string name="calibration_field_label">Signal strength</string>
     <string name="calibration_field_value_format">%.0f µT</string>
+    <string name="calibration_coverage_map_label">Each square is a direction — rotate until they fill in</string>
     <string name="calibration_status_low_coverage">Tilt the phone through more directions</string>
     <string name="calibration_status_noisy">Keep rotating steadily to settle the reading</string>
     <string name="calibration_status_weak_field">Move away from metal or magnets and try again</string>

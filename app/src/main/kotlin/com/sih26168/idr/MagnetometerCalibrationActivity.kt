@@ -52,6 +52,8 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
     private lateinit var lastCalibratedText: TextView
     private lateinit var unsupportedText: TextView
     private lateinit var figureEightView: View
+    private lateinit var coverageMapView: CoverageMapView
+    private lateinit var coverageMapLabel: TextView
 
     private val sensorListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
@@ -100,6 +102,8 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
         lastCalibratedText = findViewById(R.id.last_calibrated_text)
         unsupportedText = findViewById(R.id.unsupported_text)
         figureEightView = findViewById(R.id.figure_eight_view)
+        coverageMapView = findViewById(R.id.coverage_map_view)
+        coverageMapLabel = findViewById(R.id.coverage_map_label)
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         gravitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY)
@@ -121,6 +125,7 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
             return
         }
 
+        coverageMapView.setAccentColor(getColor(R.color.idr_primary))
         showLastCalibrated()
         finishButton.setOnClickListener { saveAndFinish() }
     }
@@ -131,6 +136,8 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
         figureEightView.visibility = View.GONE
         headingText.visibility = View.GONE
         headingCardinalText.visibility = View.GONE
+        coverageMapView.visibility = View.GONE
+        coverageMapLabel.visibility = View.GONE
         finishButton.visibility = View.GONE
         statusText.visibility = View.GONE
     }
@@ -204,6 +211,7 @@ class MagnetometerCalibrationActivity : AppCompatActivity() {
     private fun updateQualityUi() {
         coverageProgress.setProgressCompat((calibrator.coverageFraction * 100).toInt(), true)
         coverageCheck.visibility = if (calibrator.isCoverageGoodEnough) View.VISIBLE else View.INVISIBLE
+        coverageMapView.setGrid(calibrator.coverageGrid)
 
         consistencyProgress.setProgressCompat((calibrator.consistencyProgressFraction * 100).toInt(), true)
         consistencyCheck.visibility = if (calibrator.isConsistencyGoodEnough) View.VISIBLE else View.INVISIBLE

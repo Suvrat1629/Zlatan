@@ -1,5 +1,8 @@
 package com.sih26168.idr.core.nav
 
+import kotlin.math.PI
+import kotlin.math.asin
+import kotlin.math.atan2
 import kotlin.math.sqrt
 
 /**
@@ -197,23 +200,25 @@ class MagnetometerCalibrator {
         )
     }
 
+    /** The current best-fit center, or (while there isn't one yet) the buffered samples' own
+     *  mean — shared by [coverageFraction] and [coverageGrid], which both need *some* center
+     *  to bin directions around even before a real sphere fit exists. */
+    private fun currentCenterOrBufferMean(): Triple<Double, Double, Double>? {
+        if (recentFilled == 0) return null
+        val fit = solve()
+        if (fit != null) return Triple(fit.centerX, fit.centerY, fit.centerZ)
+        var sumX = 0.0; var sumY = 0.0; var sumZ = 0.0
+        for (i in 0 until recentFilled) { sumX += recentX[i]; sumY += recentY[i]; sumZ += recentZ[i] }
+        return Triple(sumX / recentFilled, sumY / recentFilled, sumZ / recentFilled)
+    }
+
     /** Fraction of the 8 octants around the current center that have real coverage
      *  (>= [MIN_SAMPLES_PER_OCTANT] samples) — a figure-8 needs varied orientation, not a
-     *  cluster of samples near one bin boundary. */
+     *  cluster of samples near one bin boundary. This is the pass/fail gate; [coverageGrid]
+     *  is a finer breakdown of the same idea, for showing *where* gaps are. */
     val coverageFraction: Float
         get() {
-            if (recentFilled == 0) return 0f
-            val fit = solve()
-            val centerX: Double
-            val centerY: Double
-            val centerZ: Double
-            if (fit != null) {
-                centerX = fit.centerX; centerY = fit.centerY; centerZ = fit.centerZ
-            } else {
-                var sumX = 0.0; var sumY = 0.0; var sumZ = 0.0
-                for (i in 0 until recentFilled) { sumX += recentX[i]; sumY += recentY[i]; sumZ += recentZ[i] }
-                centerX = sumX / recentFilled; centerY = sumY / recentFilled; centerZ = sumZ / recentFilled
-            }
+            val (centerX, centerY, centerZ) = currentCenterOrBufferMean() ?: return 0f
             val octantCounts = IntArray(8)
             var sumSqDist = 0.0
             for (i in 0 until recentFilled) {
@@ -231,6 +236,41 @@ class MagnetometerCalibrator {
             val spreadRmsUt = sqrt(sumSqDist / recentFilled)
             if (spreadRmsUt < MIN_COVERAGE_SPREAD_UT) return 0f
             return octantCounts.count { it >= MIN_SAMPLES_PER_OCTANT } / 8f
+        }
+
+    /** Finer azimuth x elevation coverage grid, purely so the UI can show the user *which*
+     *  directions are still missing instead of one abstract percentage — real calibration
+     *  tools (e.g. MotionCal) show a live point cloud for exactly this reason; a single
+     *  number gives no sense of where to rotate next. Does not affect [isGoodEnough] — the
+     *  8-octant [coverageFraction] is still the actual gate. Flat array, row-major
+     *  (elevation bin * [GRID_AZIMUTH_BINS] + azimuth bin), true where that direction has
+     *  enough samples. */
+    val coverageGrid: BooleanArray
+        get() {
+            val grid = BooleanArray(GRID_AZIMUTH_BINS * GRID_ELEVATION_BINS)
+            val (centerX, centerY, centerZ) = currentCenterOrBufferMean() ?: return grid
+            val counts = IntArray(grid.size)
+            for (i in 0 until recentFilled) {
+                val dx = recentX[i] - centerX
+                val dy = recentY[i] - centerY
+                val dz = recentZ[i] - centerZ
+                val mag = sqrt(dx * dx + dy * dy + dz * dz)
+                // A different job than MIN_COVERAGE_SPREAD_UT below: that one gates the
+                // *aggregate* buffer spread so a motionless phone can't fake coverage. This is
+                // a per-sample "is this direction even meaningful" floor, and needs to be much
+                // smaller — MIN_COVERAGE_SPREAD_UT here would drop legitimate early samples
+                // whenever the not-yet-converged center sits inside the sample cloud, leaving
+                // the grid falsely blank (exactly the "nothing is happening" problem this
+                // exists to fix). MIN_SAMPLES_PER_GRID_CELL below does the real noise filtering.
+                if (mag < MIN_AXIS_RMS_UT) continue
+                val azimuth = (atan2(dy, dx) + 2 * PI) % (2 * PI) // 0..2pi
+                val elevation = asin((dz / mag).coerceIn(-1.0, 1.0)) // -pi/2..pi/2
+                val azBin = ((azimuth / (2 * PI)) * GRID_AZIMUTH_BINS).toInt().coerceIn(0, GRID_AZIMUTH_BINS - 1)
+                val elBin = (((elevation + PI / 2) / PI) * GRID_ELEVATION_BINS).toInt().coerceIn(0, GRID_ELEVATION_BINS - 1)
+                counts[elBin * GRID_AZIMUTH_BINS + azBin]++
+            }
+            for (i in counts.indices) grid[i] = counts[i] >= MIN_SAMPLES_PER_GRID_CELL
+            return grid
         }
 
     /** Coefficient of variation of the out-of-sample residual magnitude — the honest
@@ -293,6 +333,12 @@ class MagnetometerCalibrator {
         private const val MIN_SAMPLES_FOR_FIT = 40L
         private const val MIN_SAMPLES_PER_OCTANT = 15L
         private const val MIN_COVERAGE_SPREAD_UT = 3.0
+        // Purely for the gap-visualization grid — smaller cells than the 8 octants above, so
+        // a lower per-cell sample requirement (finer granularity means each cell naturally
+        // gets fewer of the total samples).
+        const val GRID_AZIMUTH_BINS = 12
+        const val GRID_ELEVATION_BINS = 6
+        private const val MIN_SAMPLES_PER_GRID_CELL = 5
         private const val MIN_RESIDUAL_SAMPLES = 60L
         private const val MIN_AXIS_RMS_UT = 0.5
         private const val MIN_COVERAGE_FRACTION = 0.75f
