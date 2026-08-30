@@ -60,6 +60,7 @@ object EngineFactory {
         return RealEngine(
             config = config, speedEstimator = estimator, normalizer = normalizer, startAt = startAt,
             deltaEstimator = deltaEstimator, deltaNormalizer = deltaNormalizer,
+            mapMatcher = RoadsLoader.load(context),
         )
     }
 
