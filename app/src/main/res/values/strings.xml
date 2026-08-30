@@ -25,18 +25,16 @@
     <string name="calibration_title">Compass calibration</string>
     <string name="calibration_instruction">Rotate your phone through a figure-8 motion, tilting it through as many directions as you can.</string>
     <string name="calibration_heading_format">%.0f°</string>
-    <string name="calibration_coverage_label">Direction coverage</string>
-    <string name="calibration_consistency_label">Consistency</string>
-    <string name="calibration_field_label">Signal strength</string>
-    <string name="calibration_field_value_format">%.0f µT</string>
-    <string name="calibration_coverage_map_label">Each square is a direction — rotate until they fill in</string>
-    <string name="calibration_status_low_coverage">Tilt the phone through more directions</string>
-    <string name="calibration_status_noisy">Keep rotating steadily to settle the reading</string>
-    <string name="calibration_status_weak_field">Move away from metal or magnets and try again</string>
+    <string name="calibration_accuracy_label">Compass accuracy</string>
+    <string name="calibration_accuracy_unreliable">Unreliable</string>
+    <string name="calibration_accuracy_low">Low</string>
+    <string name="calibration_accuracy_medium">Medium</string>
+    <string name="calibration_accuracy_high">High</string>
+    <string name="calibration_status_needs_motion">Keep rotating until accuracy reaches High</string>
     <string name="calibration_status_ready">Looks good — you can finish now</string>
     <string name="calibration_finish_button">Finish</string>
-    <string name="calibration_saved_toast">Compass calibration saved</string>
-    <string name="calibration_last_calibrated_format">Last calibrated %s</string>
-    <string name="calibration_never">Not calibrated yet</string>
+    <string name="calibration_saved_toast">Compass calibration confirmed</string>
+    <string name="calibration_last_calibrated_format">Last confirmed %s</string>
+    <string name="calibration_never">Not confirmed yet</string>
     <string name="calibration_unsupported">This device doesn\'t have the sensors needed for compass calibration.</string>
 </resources>

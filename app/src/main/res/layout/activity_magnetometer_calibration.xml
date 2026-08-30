@@ -99,126 +99,38 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
                     android:padding="@dimen/spacing_medium">
 
-                    <!-- ===== Coverage row ===== -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
+                    <TextView
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal">
+                        android:layout_weight="1"
+                        android:text="@string/calibration_accuracy_label"
+                        android:textAppearance="?attr/textAppearanceBodyMedium"
+                        android:textColor="?attr/colorOnSurface" />
 
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/calibration_coverage_label"
-                            android:textAppearance="?attr/textAppearanceBodyMedium"
-                            android:textColor="?attr/colorOnSurface" />
-
-                        <ImageView
-                            android:id="@+id/coverage_check"
-                            android:layout_width="18dp"
-                            android:layout_height="18dp"
-                            android:visibility="invisible"
-                            android:src="@drawable/ic_check_circle"
-                            app:tint="@color/idr_navic"
-                            android:contentDescription="@null" />
-                    </LinearLayout>
-
-                    <com.google.android.material.progressindicator.LinearProgressIndicator
-                        android:id="@+id/coverage_progress"
-                        android:layout_width="match_parent"
+                    <TextView
+                        android:id="@+id/accuracy_value_text"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:max="100"
-                        app:trackCornerRadius="4dp" />
+                        android:textAppearance="?attr/textAppearanceTitleSmall"
+                        android:textStyle="bold"
+                        tools:text="High"
+                        tools:textColor="@color/idr_navic" />
 
-                    <!-- ===== Consistency row ===== -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="@dimen/spacing_medium"
-                        android:orientation="horizontal">
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/calibration_consistency_label"
-                            android:textAppearance="?attr/textAppearanceBodyMedium"
-                            android:textColor="?attr/colorOnSurface" />
-
-                        <ImageView
-                            android:id="@+id/consistency_check"
-                            android:layout_width="18dp"
-                            android:layout_height="18dp"
-                            android:visibility="invisible"
-                            android:src="@drawable/ic_check_circle"
-                            app:tint="@color/idr_navic"
-                            android:contentDescription="@null" />
-                    </LinearLayout>
-
-                    <com.google.android.material.progressindicator.LinearProgressIndicator
-                        android:id="@+id/consistency_progress"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:max="100"
-                        app:trackCornerRadius="4dp" />
-
-                    <!-- ===== Field strength row ===== -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="@dimen/spacing_medium"
-                        android:orientation="horizontal">
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/calibration_field_label"
-                            android:textAppearance="?attr/textAppearanceBodyMedium"
-                            android:textColor="?attr/colorOnSurface" />
-
-                        <TextView
-                            android:id="@+id/field_value_text"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textAppearance="?attr/textAppearanceBodyMedium"
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            tools:text="46 µT" />
-
-                        <ImageView
-                            android:id="@+id/field_check"
-                            android:layout_width="18dp"
-                            android:layout_height="18dp"
-                            android:layout_marginStart="6dp"
-                            android:visibility="invisible"
-                            android:src="@drawable/ic_check_circle"
-                            app:tint="@color/idr_navic"
-                            android:contentDescription="@null" />
-                    </LinearLayout>
-
+                    <ImageView
+                        android:id="@+id/accuracy_check"
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginStart="6dp"
+                        android:visibility="invisible"
+                        android:src="@drawable/ic_check_circle"
+                        app:tint="@color/idr_navic"
+                        android:contentDescription="@null" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
-
-            <TextView
-                android:id="@+id/coverage_map_label"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/spacing_medium"
-                android:gravity="center"
-                android:text="@string/calibration_coverage_map_label"
-                android:textAppearance="?attr/textAppearanceBodySmall"
-                android:textColor="?attr/colorOnSurfaceVariant" />
-
-            <com.sih26168.idr.CoverageMapView
-                android:id="@+id/coverage_map_view"
-                android:layout_width="match_parent"
-                android:layout_height="90dp"
-                android:layout_marginTop="4dp" />
 
             <TextView
                 android:id="@+id/status_text"
@@ -228,7 +140,7 @@
                 android:gravity="center"
                 android:textAppearance="?attr/textAppearanceBodyMedium"
                 android:textColor="?attr/colorOnSurfaceVariant"
-                tools:text="Tilt the phone through more directions" />
+                tools:text="Keep rotating until accuracy reaches High" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/finish_button"
@@ -247,7 +159,7 @@
                 android:gravity="center"
                 android:textAppearance="?attr/textAppearanceBodySmall"
                 android:textColor="?attr/colorOnSurfaceVariant"
-                tools:text="Last calibrated 3 days ago" />
+                tools:text="Last confirmed 3 days ago" />
 
             <TextView
                 android:id="@+id/unsupported_text"
