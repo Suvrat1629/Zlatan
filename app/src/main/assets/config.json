@@ -7,7 +7,7 @@
   "cold_start_seconds": 5.0,
   "speed_min_mps": 0.0,
   "speed_max_mps": 60.0,
-  "blend_tau_seconds": 240.0,
+  "blend_tau_seconds": 1200.0,
   "gnss_lost_no_fix_timeout_ms": 3000,
   "handover_slew_seconds": 1.5,
   "output_rate_hz": 10.0,

@@ -59,6 +59,7 @@ class RealEngine(
     // Time-varying blend state: the propagated speed estimate and when it was last anchored
     // to a trusted GNSS speed. 0L = never anchored (e.g. indoors since launch).
     @Volatile private var blendSpeedMps = 0f
+    private var blendLogCounter = 0
     @Volatile private var lastAnchorNanos = 0L
 
     @Volatile private var running = false
@@ -173,6 +174,14 @@ class RealEngine(
             val lam = (tSec / (tSec + config.blendTauSeconds)).toFloat()
             blendSpeedMps = ((1f - lam) * (blendSpeedMps + dvPerSecond * dtSeconds.toFloat()) + lam * vAbs)
                 .coerceIn(config.speedMinMps, config.speedMaxMps)
+            // Diagnostic (~every 2 s): field truth showed vAbs can misfire out-of-domain
+            // (real phone/road vs IO-VNBD training) — this line is how we catch it.
+            if (blendLogCounter++ % 20 == 0) {
+                System.out.println(
+                    "IDR-BLEND vAbs=${"%.1f".format(vAbs * 3.6f)}km/h dv=${"%.2f".format(dvPerSecond)}m/s2 " +
+                        "lam=${"%.3f".format(lam)} t=${"%.0f".format(tSec)}s blend=${"%.1f".format(blendSpeedMps * 3.6f)}km/h"
+                )
+            }
             blendSpeedMps
         } else {
             vAbs
