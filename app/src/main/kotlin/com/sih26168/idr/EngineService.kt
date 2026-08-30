@@ -10,6 +10,7 @@ import android.location.LocationManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.sih26168.idr.androidsensors.SensorSource
@@ -37,12 +38,16 @@ class EngineService : Service() {
     private val binder = LocalBinder()
 
     private lateinit var rawEngine: PositioningEngine
+    /** Null when the model failed to load and EngineFactory returned a stub. */
+    private var realEngine: RealEngine? = null
     private lateinit var recordingEngine: TripRecordingEngine
     private var sensorSource: SensorSource? = null
     private var gnssSource: GnssSource? = null
 
     lateinit var telemetry: TelemetrySession
         private set
+
+    private val uploader = TelemetryUploader()
 
     /** Drives the once-a-second telemetry logcat line; cancelled in onDestroy. */
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -69,7 +74,13 @@ class EngineService : Service() {
         )
         recordingEngine = TripRecordingEngine(rawEngine)
 
-        (rawEngine as? RealEngine)?.setTelemetry(telemetry.diagnostics, null)
+        realEngine = rawEngine as? RealEngine
+        if (realEngine == null) {
+            // Otherwise this fails silently: every setTelemetry call is on a nullable receiver,
+            // so a stub engine would disable telemetry with no error and no data written.
+            Log.e(TAG_TEL, "engine is not RealEngine — model failed to load, telemetry disabled")
+        }
+        realEngine?.setTelemetry(telemetry.diagnostics, null, uploader::onTick)
 
         createNotificationChannel()
         try {
@@ -117,16 +128,17 @@ class EngineService : Service() {
         sensorSource?.stop()
         gnssSource?.stop()
         recordingEngine.stopRecording()
-        (rawEngine as? RealEngine)?.setTelemetry(null, null)
+        realEngine?.setTelemetry(null, null)
         // Write the summary even if Record was never stopped, so a killed session still
         // leaves behind the numbers it measured.
         telemetry.stopFileCapture()
+        uploader.close()
         recordingEngine.stop()
         super.onDestroy()
     }
 
     fun setVehicleMode(mode: VehicleMode) {
-        (rawEngine as? RealEngine)?.setVehicleMode(mode)
+        realEngine?.setVehicleMode(mode)
     }
 
     fun setGnssMuted(muted: Boolean) {
@@ -138,14 +150,14 @@ class EngineService : Service() {
             recordingEngine.stopRecording()
             // Detach the CSV writer but keep diagnostics running: they are cheap, and a moment
             // worth seeing should not be lost because nobody pressed Record.
-            (rawEngine as? RealEngine)?.setTelemetry(telemetry.diagnostics, null)
+            realEngine?.setTelemetry(telemetry.diagnostics, null)
             telemetry.stopFileCapture()
         } else {
             val dir = File(getExternalFilesDir(null), "traces").apply { mkdirs() }
             val name = "trip_${TRACE_TIMESTAMP_FORMAT.format(Date())}.csv"
             recordingEngine.startRecording(File(dir, name))
             telemetry.startFileCapture(currentVehicle, currentMount)
-            (rawEngine as? RealEngine)?.setTelemetry(telemetry.diagnostics, telemetry.telemetryWriter)
+            realEngine?.setTelemetry(telemetry.diagnostics, telemetry.telemetryWriter)
         }
         return recordingEngine.isRecording
     }
@@ -196,6 +208,7 @@ class EngineService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "idr_navigation"
+        private const val TAG_TEL = "IDR-TEL"
         private val TRACE_TIMESTAMP_FORMAT = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US)
     }
 }

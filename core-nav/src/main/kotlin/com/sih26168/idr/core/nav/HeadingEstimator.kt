@@ -6,6 +6,10 @@ interface HeadingEstimator {
 
     fun seedFromGnssCourse(bearingDeg: Float)
 
+    /** Pull the heading a fraction [alpha] of the way toward [bearingDeg] on the circle.
+     *  Used by the road-heading correction; default no-op for estimators without it. */
+    fun nudgeToward(bearingDeg: Double, alpha: Double) {}
+
     fun headingDeg(): Double
 }
 
@@ -25,6 +29,12 @@ class GyroIntegrationHeadingEstimator(initialHeadingDeg: Double = 0.0) : Heading
 
     override fun seedFromGnssCourse(bearingDeg: Float) {
         headingDeg = bearingDeg.toDouble().mod(360.0)
+    }
+
+    override fun nudgeToward(bearingDeg: Double, alpha: Double) {
+        // shortest signed angular difference, then move a fraction of it
+        val diff = ((bearingDeg - headingDeg + 540.0) % 360.0) - 180.0
+        headingDeg = (headingDeg + alpha * diff).mod(360.0)
     }
 
     override fun headingDeg(): Double = headingDeg

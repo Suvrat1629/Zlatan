@@ -32,6 +32,10 @@ data class TelemetryTick(
     val irnssSatsInFix: Int,
     val lat: Double,
     val lon: Double,
+    /** Last trusted GNSS fix position — diverges from lat/lon during blackout, and that
+     *  divergence is the model-failure signal this log exists to expose. NaN before first fix. */
+    val gnssLat: Double,
+    val gnssLon: Double,
     val uncertaintyM: Float,
     /** Estimated gyro yaw-rate bias, deg/s. NaN when the filter tracks no bias state.
      *  Whether this converges to a stable value per device is the check that the bias state is

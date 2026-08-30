@@ -68,6 +68,8 @@ class RealEngine(
     @Volatile private var lastYawRateRadS = 0f
     @Volatile private var lastGyroZ = 0f
     @Volatile private var lastGnssBearingDeg = Float.NaN
+    @Volatile private var lastGnssLat = Double.NaN
+    @Volatile private var lastGnssLon = Double.NaN
     @Volatile private var lastInferenceMs = Float.NaN
     @Volatile private var lastDvMps2 = Float.NaN
     @Volatile private var lastLambda = Float.NaN
@@ -75,9 +77,16 @@ class RealEngine(
     @Volatile private var diagnostics: Diagnostics? = null
     @Volatile private var telemetryWriter: TelemetryWriter? = null
 
-    fun setTelemetry(diagnostics: Diagnostics?, writer: TelemetryWriter?) {
+    @Volatile private var tickListener: ((TelemetryTick) -> Unit)? = null
+
+    fun setTelemetry(
+        diagnostics: Diagnostics?,
+        writer: TelemetryWriter?,
+        tickListener: ((TelemetryTick) -> Unit)? = this.tickListener,
+    ) {
         this.diagnostics = diagnostics
         this.telemetryWriter = writer
+        this.tickListener = tickListener
     }
     // Heading must integrate EVERY gyro sample: point-sampling one z-rate per 100 ms tick
     // aliases fast turns (a 1-2 s 90-degree turn gets undercounted while a slow U-turn
@@ -94,6 +103,7 @@ class RealEngine(
     @Volatile private var blendSpeedMps = 0f
     private var blendLogCounter = 0
     @Volatile private var lastAnchorNanos = 0L
+    @Volatile private var lastPublishedSpeedMps = 0f
 
     // User-selected vehicle context (GUI). WALK damps published speed; CAR/BIKE unchanged.
     @Volatile private var vehicleMode: VehicleMode = VehicleMode.CAR
@@ -202,6 +212,8 @@ class RealEngine(
     ) {
         diagnostics?.onGnssFix(tNanos)
         lastGnssBearingDeg = bearingDeg
+        lastGnssLat = lat
+        lastGnssLon = lon
         // The first trusted fix after a blackout is the only truth we get. Hand it to
         // diagnostics with what the engine believed at that instant, before the fix is applied
         // and the belief is overwritten.
@@ -347,14 +359,25 @@ class RealEngine(
         val speedOut = if (vehicleMode == VehicleMode.WALK)
             (speedMps * config.walkingSpeedScale).coerceAtMost(config.walkingSpeedMaxMps)
         else speedMps
+
+        // Physical slew limit: a ground vehicle cannot gain more than ~4 m/s^2 or shed more
+        // than ~12 m/s^2. Without this, shaking the phone spikes the model to absurd speeds
+        // (field: 160 km/h while standing still). ZUPT's instant zero survives because a
+        // drop is allowed 12 m/s^2, reaching 0 from city speeds within a couple of ticks.
+        val dtF = dtSeconds.toFloat()
+        val slewed = speedOut.coerceIn(
+            lastPublishedSpeedMps - config.maxSpeedDropMps2 * dtF,
+            lastPublishedSpeedMps + config.maxSpeedRiseMps2 * dtF,
+        ).coerceAtLeast(0f)
+        lastPublishedSpeedMps = slewed
         headingEstimator.predict((turnRad / dtSeconds).toFloat(), dtSeconds)
         val headingDeg = headingEstimator.headingDeg()
 
-        val deadReckoned = deadReckoner.step(speedOut, headingDeg, dtSeconds)
+        val deadReckoned = deadReckoner.step(slewed, headingDeg, dtSeconds)
         // headingDeg here is the raw gyro-integrated control input -- it must stay raw, not
         // the filter's own corrected heading, or the correction would feed back into itself
         // instead of being driven by fresh gyro data.
-        fusionFilter.predict(deadReckoned, speedOut, headingDeg, dtSeconds)
+        fusionFilter.predict(deadReckoned, slewed, headingDeg, dtSeconds)
         val preMatchPos = fusionFilter.estimate()
         // ONE snap call per tick -- the HMM advances its hypothesis chain on each call past the
         // displacement gate, so calling it twice would double-step it.
@@ -407,23 +430,54 @@ class RealEngine(
         val displayPos = if (fuseMapMatch) fused else matchResult.position
         deadReckoner.reset(fused)
 
-        // The filter may track its own, better-corrected heading (e.g. ErrorStateEkf, via
-        // GNSS bearing and position-residual coupling) -- publish that when available instead
-        // of the raw gyro heading, which never benefits from those corrections on its own.
-        val publishedHeadingDeg = fusionFilter.headingDeg() ?: headingDeg
+        // Road-heading correction: on a confident match, pull heading toward the road's bearing.
+        // The gyro's heading random-walk is the dominant cross-track error on long straights
+        // (Part C: 4% -> 34% with outage duration); the road geometry is the absolute reference
+        // the magnetometer failed to be. Gates: tight match only, moving (bearing is meaningless
+        // when parked), and NOT turning (never fight a real turn).
+        //
+        // Only applied when the fusion filter does NOT own heading. The ErrorStateEkf reads
+        // headingDeg as a tick-to-tick DELTA, so nudging the gyro estimator underneath it would
+        // inject the whole correction as if it were real rotation -- unweighted, bypassing the
+        // covariance, exactly the trap that seedFromGnssCourse is already gated against above.
+        // With the EKF active the road bearing should instead enter as a filter measurement;
+        // MapMatchResult.roadBearingDeg already carries it and updateWithMapMatch already applies
+        // it anisotropically. Until that lands, the correction is off under the EKF rather than
+        // silently corrupting it.
+        val roadBearing = matchResult.roadBearingDeg
+        if (fusionFilter.headingDeg() == null &&
+            roadBearing != null &&
+            matchResult.onRoad &&
+            matchResult.uncertaintyM <= config.roadHeadingMaxDistM &&
+            slewed > 3f &&
+            kotlin.math.abs(turnRad / dtSeconds) < config.roadHeadingMaxTurnRps
+        ) {
+            // Way direction is arbitrary: resolve the 180-degree ambiguity toward whichever end
+            // is closer to the current heading.
+            val h = headingEstimator.headingDeg()
+            val d1 = kotlin.math.abs(((roadBearing - h + 540.0) % 360.0) - 180.0)
+            val target = if (d1 <= 90.0) roadBearing else (roadBearing + 180.0).mod(360.0)
+            headingEstimator.nudgeToward(target, config.roadHeadingGain)
+        }
+
+        // The filter may track its own, better-corrected heading (e.g. ErrorStateEkf, via GNSS
+        // bearing and position-residual coupling) -- publish that when available instead of the
+        // raw gyro heading, which never benefits from those corrections on its own.
+        val publishedHeadingDeg = fusionFilter.headingDeg() ?: headingEstimator.headingDeg()
 
         val mode = modeArbiter.currentMode(tEndNanos)
         publish(
-            lat = displayPos.lat, lon = displayPos.lon, speedMps = speedOut, headingDeg = publishedHeadingDeg.toFloat(),
+            lat = displayPos.lat, lon = displayPos.lon, speedMps = slewed,
+            headingDeg = publishedHeadingDeg.toFloat(),
             mode = mode, tEndNanos = tEndNanos, tickStartNanos = t0,
         )
 
-        if (diagnostics != null || telemetryWriter != null) {
+        if (diagnostics != null || telemetryWriter != null || tickListener != null) {
             val tick = TelemetryTick(
                 tNanos = tEndNanos,
                 vModelMps = vAbs,
                 dvMps2 = lastDvMps2,
-                vOutMps = speedOut,
+                vOutMps = slewed,
                 vGnssMps = lastKnownGnssSpeedMps.get(),
                 blendLambda = lastLambda,
                 yawRateRadS = (turnRad / dtSeconds).toFloat(),
@@ -436,6 +490,8 @@ class RealEngine(
                 irnssSatsInFix = modeArbiter.irnssSatsInFix(),
                 lat = displayPos.lat,
                 lon = displayPos.lon,
+                gnssLat = lastGnssLat,
+                gnssLon = lastGnssLon,
                 uncertaintyM = fusionFilter.uncertaintyM(),
                 gyroBiasDps = fusionFilter.gyroBiasDps().toFloat(),
                 headingUncertaintyDeg = (fusionFilter.headingUncertaintyDeg() ?: Double.NaN).toFloat(),
@@ -448,6 +504,7 @@ class RealEngine(
             )
             diagnostics?.onTick(tick)
             telemetryWriter?.write(tick)
+            tickListener?.invoke(tick)
         }
     }
 
