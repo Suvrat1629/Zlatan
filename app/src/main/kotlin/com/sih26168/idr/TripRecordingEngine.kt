@@ -12,20 +12,30 @@ class TripRecordingEngine(
     private val flushEveryNEvents: Int = 200,
 ) : PositioningEngine by delegate {
 
-    @Volatile private var writer: TraceWriter? = null
+    // logEvent() runs on the sensor thread; startRecording()/stopRecording() run on the
+    // main thread. Without this lock, a sensor event mid-write could race a concurrent
+    // close() and throw "Stream closed" — happened in practice, not just in theory.
+    // Everything that touches `writer` goes through this same lock so a write and a
+    // close can never interleave.
+    private val lock = Any()
+    private var writer: TraceWriter? = null
     private var eventsSinceFlush = 0
 
-    val isRecording: Boolean get() = writer != null
+    val isRecording: Boolean get() = synchronized(lock) { writer != null }
 
     fun startRecording(traceFile: File) {
-        writer?.close()
-        writer = TraceWriter(traceFile)
-        eventsSinceFlush = 0
+        synchronized(lock) {
+            writer?.close()
+            writer = TraceWriter(traceFile)
+            eventsSinceFlush = 0
+        }
     }
 
     fun stopRecording() {
-        writer?.close()
-        writer = null
+        synchronized(lock) {
+            writer?.close()
+            writer = null
+        }
     }
 
     override fun onImuSample(
@@ -54,12 +64,14 @@ class TripRecordingEngine(
     }
 
     private fun logEvent(event: TraceEvent) {
-        val w = writer ?: return
-        w.write(event)
-        eventsSinceFlush++
-        if (eventsSinceFlush >= flushEveryNEvents) {
-            w.flush()
-            eventsSinceFlush = 0
+        synchronized(lock) {
+            val w = writer ?: return
+            w.write(event)
+            eventsSinceFlush++
+            if (eventsSinceFlush >= flushEveryNEvents) {
+                w.flush()
+                eventsSinceFlush = 0
+            }
         }
     }
 }

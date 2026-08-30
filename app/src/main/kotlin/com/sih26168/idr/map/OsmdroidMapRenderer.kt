@@ -8,12 +8,17 @@ import android.widget.FrameLayout
 import com.sih26168.idr.R
 import com.sih26168.idr.core.types.Mode
 import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.modules.ArchiveFileFactory
+import org.osmdroid.tileprovider.modules.OfflineTileProvider
+import org.osmdroid.tileprovider.tilesource.FileBasedTileSource
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.util.SimpleRegisterReceiver
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.Polyline
+import java.io.File
 
 class OsmdroidMapRenderer(context: Context) : MapRenderer {
 
@@ -26,9 +31,77 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
     private fun dp(value: Float): Float = value * density
 
     private val mapView = MapView(context).apply {
-        setTileSource(TileSourceFactory.MAPNIK)
         setMultiTouchControls(true)
         controller.setZoom(17.0)
+    }
+
+    init {
+        configureTileSource(context)
+    }
+
+    /**
+     * Aneesh/TODO.md A1: TileSourceFactory.MAPNIK fetches every tile over HTTP from the
+     * public OSM demo servers — stalls when panning into new territory, breaks outright
+     * with no signal, and bulk-fetching from those servers is against their usage policy
+     * (see docs/architecture-android.md §9). Fix: look for a pre-supplied offline tile
+     * archive first; only fall back to the live server if none is found, so this never
+     * breaks a dev setup that hasn't been given an archive yet.
+     *
+     * Drop a `.mbtiles` or osmdroid `.sqlite` archive for the demo region at
+     * `<external-files-dir>/offline-tiles/` on the device — e.g.
+     *   adb push demo-region.mbtiles /sdcard/Android/data/com.sih26168.idr/files/offline-tiles/
+     * This does NOT generate that archive — that's a separate, deliberate data-prep step
+     * (Geofabrik extract → tile render, see docs/architecture-system.md §10), not
+     * something to do live from the app.
+     */
+    private fun configureTileSource(context: Context) {
+        val archiveDir = File(context.getExternalFilesDir(null) ?: context.filesDir, OFFLINE_TILE_DIR)
+        // isFileExtensionRegistered wants the bare extension (e.g. "mbtiles"), not the
+        // full filename with the dot — passing file.name here always returns false.
+        val archiveFiles = archiveDir.listFiles { file ->
+            ArchiveFileFactory.isFileExtensionRegistered(file.extension.lowercase())
+        }
+            ?.toList()
+            .orEmpty()
+
+        if (archiveFiles.isEmpty()) {
+            System.err.println(
+                "[OsmdroidMapRenderer] no offline tile archive at ${archiveDir.absolutePath} — " +
+                    "falling back to the live OSM Mapnik server (needs network, and is not for " +
+                    "production use — Aneesh/TODO.md A1). Drop a .mbtiles/.sqlite archive there " +
+                    "to go fully offline."
+            )
+            mapView.setTileSource(TileSourceFactory.MAPNIK)
+            return
+        }
+
+        try {
+            val offlineProvider = OfflineTileProvider(SimpleRegisterReceiver(context), archiveFiles.toTypedArray())
+            mapView.setTileProvider(offlineProvider)
+            mapView.setUseDataConnection(false)
+
+            // MBTiles archives don't store a tile-source name at all, so this can come
+            // back empty — the archive still serves tiles by z/x/y regardless of which
+            // source is nominally configured, and the network path is already off above.
+            val sourceName = offlineProvider.archives
+                .asSequence()
+                .flatMap { it.tileSources.asSequence() }
+                .firstOrNull()
+            mapView.setTileSource(
+                if (sourceName != null) FileBasedTileSource.getSource(sourceName) else TileSourceFactory.MAPNIK
+            )
+
+            System.err.println(
+                "[OsmdroidMapRenderer] loaded ${archiveFiles.size} offline tile archive(s) from " +
+                    "${archiveDir.absolutePath} — network tile fetching disabled."
+            )
+        } catch (e: Exception) {
+            System.err.println(
+                "[OsmdroidMapRenderer] failed to load offline archive(s) at ${archiveDir.absolutePath} " +
+                    "(${e.message}) — falling back to the live OSM Mapnik server."
+            )
+            mapView.setTileSource(TileSourceFactory.MAPNIK)
+        }
     }
 
     // Non-deprecated osmdroid API: fillPaint / outlinePaint instead of the
@@ -57,6 +130,7 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
 
     private var followEnabled = true
     private var lastPoint: GeoPoint? = null
+    private var hasCentered = false
 
     override fun attach(container: ViewGroup) {
         container.removeAllViews()
@@ -95,7 +169,19 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
             if (degraded) UNCERTAINTY_FILL_DR else UNCERTAINTY_FILL_GNSS
         uncertaintyCircle.outlinePaint.color =
             if (degraded) UNCERTAINTY_STROKE_DR else UNCERTAINTY_STROKE_GNSS
-        if (followEnabled) mapView.controller.animateTo(point)
+        if (followEnabled) {
+            if (!hasCentered) {
+                // The very first fix: jump straight there. MapView defaults to
+                // (0,0) ("Null Island") when no center is ever set, and animating
+                // from there at a tight zoom means flying tiles across half the
+                // globe before settling — this is what "the map takes forever to
+                // load" actually was. Every update after this one still animates.
+                mapView.controller.setCenter(point)
+                hasCentered = true
+            } else {
+                mapView.controller.animateTo(point)
+            }
+        }
         mapView.invalidate()
     }
 
@@ -130,10 +216,21 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
 
     override fun recenter() {
         followEnabled = true
-        lastPoint?.let { mapView.controller.animateTo(it) }
+        val point = lastPoint ?: return
+        if (!hasCentered) {
+            // Same reasoning as updatePosition()'s first-fix case: if the user pans away
+            // before any fix has landed and then hits recenter, don't animate from
+            // Null Island either.
+            mapView.controller.setCenter(point)
+            hasCentered = true
+        } else {
+            mapView.controller.animateTo(point)
+        }
     }
 
     companion object {
+        private const val OFFLINE_TILE_DIR = "offline-tiles"
+
         private val GNSS_TRAIL_COLOR = 0xFF1565C0.toInt()
         private val DEAD_RECKONING_TRAIL_COLOR = 0xFFFF8F00.toInt()
 
