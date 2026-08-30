@@ -7,6 +7,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import java.io.File
 import java.io.OutputStream
+import android.util.Log
 
 /**
  * Writes telemetry to the phone's shared Documents/IDR folder rather than app-private storage,
@@ -27,15 +28,24 @@ object SharedStorage {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) mediaStore(context, name, mime)
         else legacy(name)
 
-    private fun mediaStore(context: Context, name: String, mime: String): OutputStream? {
+    private fun mediaStore(context: Context, name: String, mime: String): OutputStream? = try {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, mime)
             put(MediaStore.MediaColumns.RELATIVE_PATH, FOLDER)
         }
         val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val uri = context.contentResolver.insert(collection, values) ?: return null
-        return context.contentResolver.openOutputStream(uri)
+        val uri = context.contentResolver.insert(collection, values)
+        if (uri == null) {
+            Log.e(TAG, "MediaStore insert returned null for $name in $FOLDER")
+            null
+        } else {
+            Log.i(TAG, "opened $uri")
+            context.contentResolver.openOutputStream(uri)
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "MediaStore write failed for $name: ${e.javaClass.simpleName}: ${e.message}")
+        null
     }
 
     private fun legacy(name: String): OutputStream? = try {
@@ -45,6 +55,9 @@ object SharedStorage {
         ).apply { mkdirs() }
         File(dir, name).outputStream()
     } catch (e: Exception) {
+        Log.e(TAG, "legacy write failed for $name: ${e.javaClass.simpleName}: ${e.message}")
         null
     }
+
+    private const val TAG = "IDR-TEL"
 }
