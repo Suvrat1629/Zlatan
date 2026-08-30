@@ -31,6 +31,10 @@ class RealEngine(
     private val headingEstimator: HeadingEstimator = GyroIntegrationHeadingEstimator(),
     private val fusionFilter: FusionFilter = PassthroughFusionFilter(startAt),
     private val mapMatcher: MapMatcher = NoOpMapMatcher(),
+    // Optional delta-speed model enabling the time-varying blend (see tickOnce). When null,
+    // the engine publishes the absolute model's speed exactly as before.
+    private val deltaEstimator: SpeedEstimator? = null,
+    private val deltaNormalizer: Normalizer? = null,
 
     ringBufferCapacitySamples: Int = 4000,
 ) : PositioningEngine {
@@ -51,6 +55,11 @@ class RealEngine(
     @Volatile private var lastGyroZ = 0f
     private val pendingGnssFix = AtomicReference<GnssFixRecord?>(null)
     private val lastKnownGnssSpeedMps = AtomicReference(0f)
+
+    // Time-varying blend state: the propagated speed estimate and when it was last anchored
+    // to a trusted GNSS speed. 0L = never anchored (e.g. indoors since launch).
+    @Volatile private var blendSpeedMps = 0f
+    @Volatile private var lastAnchorNanos = 0L
 
     @Volatile private var running = false
     private val periodMs = (1000.0 / config.outputRateHz).toLong()
@@ -131,6 +140,9 @@ class RealEngine(
             // published dot was pure dead-reckoning forever after INIT, silently ignoring
             // every GNSS fix (map position visibly desynced from real GPS).
             deadReckoner.reset(LatLon(fix.lat, fix.lon))
+            // Blend anchor: a trusted fix re-anchors the propagated speed estimate.
+            blendSpeedMps = fix.speedMps.coerceIn(config.speedMinMps, config.speedMaxMps)
+            lastAnchorNanos = fix.tNanos
         }
 
         if (rawWindow == null) {
@@ -146,9 +158,25 @@ class RealEngine(
 
         val features = FeatureExtractor.featureWindow(rawWindow)
         val normalized = normalizer.apply(features)
-        val speedMps = speedEstimator.estimate(normalized).coerceIn(config.speedMinMps, config.speedMaxMps)
-
         val dtSeconds = 1.0 / config.outputRateHz
+        val vAbs = speedEstimator.estimate(normalized).coerceIn(config.speedMinMps, config.speedMaxMps)
+
+        // Time-varying blend (validated offline: results/blend_tv_eval.json):
+        //   lam = t/(t+tau), t = seconds since last trusted GNSS anchor
+        //   v   = (1-lam) * (v + dv*dt)  +  lam * vAbs
+        // Fresh anchor -> ride the anchor + delta model (CV prior's strong zone).
+        // Old/no anchor -> the duration-stable absolute model takes over (lam -> 1),
+        // which also keeps indoor/hand-held behaviour pinned near zero (v2 negatives).
+        val speedMps = if (deltaEstimator != null && deltaNormalizer != null && lastAnchorNanos != 0L) {
+            val dvPerSecond = deltaEstimator.estimate(deltaNormalizer.apply(features))
+            val tSec = ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
+            val lam = (tSec / (tSec + config.blendTauSeconds)).toFloat()
+            blendSpeedMps = ((1f - lam) * (blendSpeedMps + dvPerSecond * dtSeconds.toFloat()) + lam * vAbs)
+                .coerceIn(config.speedMinMps, config.speedMaxMps)
+            blendSpeedMps
+        } else {
+            vAbs
+        }
         headingEstimator.predict(lastGyroZ, dtSeconds)
         val headingDeg = headingEstimator.headingDeg()
 

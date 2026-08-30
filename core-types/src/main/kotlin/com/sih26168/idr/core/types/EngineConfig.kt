@@ -15,6 +15,9 @@ data class EngineConfig(
     val speedMinMps: Float = 0f,
     val speedMaxMps: Float = 60f,
 
+    // Time-varying blend gain timescale: lam = t/(t+tau), t = seconds since GNSS anchor.
+    val blendTauSeconds: Double = 240.0,
+
     val gnssLostNoFixTimeoutMs: Long = 3_000,
     val handoverSlewSeconds: Double = 1.5,
 

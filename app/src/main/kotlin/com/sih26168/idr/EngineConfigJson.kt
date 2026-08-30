@@ -15,6 +15,7 @@ object EngineConfigJson {
             coldStartSeconds = o.optDouble("cold_start_seconds", d.coldStartSeconds),
             speedMinMps = o.optDouble("speed_min_mps", d.speedMinMps.toDouble()).toFloat(),
             speedMaxMps = o.optDouble("speed_max_mps", d.speedMaxMps.toDouble()).toFloat(),
+            blendTauSeconds = o.optDouble("blend_tau_seconds", d.blendTauSeconds),
             gnssLostNoFixTimeoutMs = o.optLong("gnss_lost_no_fix_timeout_ms", d.gnssLostNoFixTimeoutMs),
             handoverSlewSeconds = o.optDouble("handover_slew_seconds", d.handoverSlewSeconds),
             outputRateHz = o.optDouble("output_rate_hz", d.outputRateHz),
