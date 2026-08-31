@@ -30,6 +30,10 @@ data class TelemetryTick(
     /** Window-mean gyro rate perpendicular to gravity, rad/s — the handling detector's raw input.
      *  Logged unconditionally so the physics-argued threshold can be replaced by a measured
      *  distribution after the first real drive, before it is trusted any further. */
+    /** Real elapsed time this tick covered, milliseconds. Nominal is 1000/outputRateHz; anything
+     *  much above it means the scheduler was starved, which used to be invisible because the engine
+     *  integrated the nominal value regardless (TODO.md K1). */
+    val tickIntervalMs: Float,
     val tiltRateRadS: Float,
     /** Whether the handling detector fired this tick. This is the VERDICT, independent of whether
      *  `use_handling_gate` let it act — with the gate in measure-only mode this column is the

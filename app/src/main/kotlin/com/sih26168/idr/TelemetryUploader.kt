@@ -111,6 +111,7 @@ class TelemetryUploader : Closeable {
             // Handling gate (TODO.md G1/H4): the threshold is argued from vehicle physics and is
             // measurably too high for the pedestrian phantom. Uploading its raw input is what lets
             // a drive replace the argument with a distribution.
+            putFinite("tick_interval_ms", t.tickIntervalMs)
             putFinite("tilt_rate_rps", t.tiltRateRadS)
             put("handling", t.handling)
             put("vehicle_mode", t.vehicleMode.name)
@@ -214,7 +215,7 @@ class TelemetryUploader : Closeable {
          *  when the server says the table does not have them yet. */
         private val EXTENDED_COLUMNS = listOf(
             "gyro_bias_dps", "heading_unc_deg", "gnss_nis", "yaw_clamp_count",
-            "map_on_road", "map_unc_m", "tilt_rate_rps", "handling", "vehicle_mode", "gnss_muted",
+            "map_on_road", "map_unc_m", "tilt_rate_rps", "handling", "vehicle_mode", "gnss_muted", "tick_interval_ms",
         )
     }
 }

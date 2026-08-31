@@ -17,6 +17,7 @@ import com.sih26168.idr.androidsensors.SensorSource
 import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.Mode
 import com.sih26168.idr.core.types.PositioningEngine
+import com.sih26168.idr.core.replay.TraceWriter
 import com.sih26168.idr.core.types.VehicleMode
 import com.sih26168.idr.engine.RealEngine
 import kotlinx.coroutines.CoroutineScope
@@ -185,9 +186,23 @@ class EngineService : Service() {
             telemetry.startFileCapture(currentVehicle, currentMount)
             realEngine?.setTelemetry(telemetry.diagnostics, telemetry.telemetryWriter)
         } else {
-            val dir = File(getExternalFilesDir(null), "traces").apply { mkdirs() }
-            val name = "trip_${TRACE_TIMESTAMP_FORMAT.format(Date())}.csv"
-            recordingEngine.startRecording(File(dir, name))
+            // Shared storage, and named with the SAME session id as the telemetry CSV.
+            //
+            // The raw trace used to land in app-private storage under a timestamp of its own. On
+            // Android 11+ that folder is not browsable, so retrieving a trace needed adb — and the
+            // independent timestamp meant matching a trace to its telemetry was a manual job of
+            // comparing clocks. Both problems bit at once when the v3 negatives needed exactly one
+            // trace and nobody could tell which file it was, or reach it. See TODO.md K5.
+            val name = "trip_${telemetry.id}.csv"
+            val stream = SharedStorage.openForWrite(this, name, "text/csv")
+            if (stream != null) {
+                recordingEngine.startRecording(TraceWriter(stream))
+                Log.i(TAG_TEL, "raw trace -> Documents/IDR/$name")
+            } else {
+                val dir = File(getExternalFilesDir(null), "traces").apply { mkdirs() }
+                Log.e(TAG_TEL, "shared storage unavailable — raw trace falling back to app-private ${dir.path}")
+                recordingEngine.startRecording(File(dir, name))
+            }
             telemetry.setContext(currentVehicle, currentMount)
             realEngine?.setTelemetry(telemetry.diagnostics, telemetry.telemetryWriter)
         }
@@ -241,6 +256,5 @@ class EngineService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "idr_navigation"
         private const val TAG_TEL = "IDR-TEL"
-        private val TRACE_TIMESTAMP_FORMAT = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US)
     }
 }

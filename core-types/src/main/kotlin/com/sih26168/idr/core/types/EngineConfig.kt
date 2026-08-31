@@ -90,6 +90,25 @@ data class EngineConfig(
      * NIS and map-match gates already follow.
      */
     val useHandlingGate: Boolean = false,
+
+    /**
+     * Whether the delta-speed model participates in the blend.
+     *
+     * Off by default. The delta model is **architecturally incapable** of the job the blend gives
+     * it, and no retraining fixes that: `FeatureExtractor` emits `a_horiz` as a MAGNITUDE, so the
+     * sign of longitudinal acceleration is destroyed before the model ever sees it. Accelerating
+     * and braking are the same input. Verified directly against the shipped `delta_v1` weights —
+     * a hard-braking window returns **+0.30 m/s²** where the truth is about −2.5.
+     *
+     * Confirmed in the field: across 18,000 GNSS-aided ticks its output was +0.01 m/s² whether the
+     * vehicle was braking hard or accelerating hard. It contributes nothing but a false dependency,
+     * and the blend silently relies on it.
+     *
+     * Re-enabling this requires a signed longitudinal-acceleration channel — projecting linear
+     * acceleration onto an estimated forward axis — which changes the feature vector and forces a
+     * retrain of both models. That is a real design task, not a config change.
+     */
+    val useDeltaModel: Boolean = false,
     /**
      * How long the engine may coast on a held speed and frozen heading before it resumes normal
      * processing regardless, seconds.
@@ -117,6 +136,25 @@ data class EngineConfig(
     // ~4 m/s^2 or brakes harder than ~12 m/s^2. Kills sensor-shake speed spikes.
     val maxSpeedRiseMps2: Float = 4.0f,
     val maxSpeedDropMps2: Float = 12.0f,
+
+    /**
+     * Upper bound on the elapsed time a single engine tick may integrate, seconds.
+     *
+     * The engine used to integrate a FIXED nominal dt of 1/outputRateHz. Measured on a 106-minute
+     * ride, real tick spacing was p50 99 ms but p90 212 ms and p99 647 ms — `scheduleAtFixedRate`
+     * gets starved on a loaded phone. The engine therefore advanced position for **20.5% less time
+     * than actually passed**, and 25% less during outages specifically.
+     *
+     * That error was silently cancelling most of the speed model's over-prediction, which is why
+     * GNSS-aided distance measured a flattering 0.98x. Using real elapsed time is correct, and it
+     * will make the speed model's error visible rather than creating it.
+     *
+     * The clamp exists because a genuinely huge gap — app suspended, doze, a 4.4 s stall was
+     * observed — must not be integrated as if the last known speed held throughout. Beyond this
+     * bound the tick integrates the bound and says so; the gap is real but the speed estimate
+     * across it is not evidence.
+     */
+    val maxTickIntegrationSeconds: Double = 0.5,
 
     val gnssLostNoFixTimeoutMs: Long = 3_000,
     val handoverSlewSeconds: Double = 1.5,

@@ -20,8 +20,14 @@ sealed class TraceEvent {
     data class Lost(override val tNanos: Long) : TraceEvent()
 }
 
-class TraceWriter(file: File) : Closeable {
-    private val writer: BufferedWriter = file.bufferedWriter()
+class TraceWriter(private val writer: BufferedWriter) : Closeable {
+    /** Convenience for tests and replay tooling, which work with real files. */
+    constructor(file: File) : this(file.bufferedWriter())
+
+    /** The app writes to the phone's shared Documents/IDR folder, which MediaStore hands out as a
+     *  stream rather than a File — so a tester can retrieve the raw trace from the Files app
+     *  instead of needing adb and app-private storage. */
+    constructor(stream: java.io.OutputStream) : this(stream.bufferedWriter())
 
     fun write(event: TraceEvent) {
         val line = when (event) {

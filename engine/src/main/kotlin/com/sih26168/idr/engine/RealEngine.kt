@@ -111,6 +111,14 @@ class RealEngine(
     @Volatile private var blendSpeedMps = 0f
     private var blendLogCounter = 0
     private var handlingLogCounter = 0
+    private var longTickLogCounter = 0
+    private val longTickCount = java.util.concurrent.atomic.AtomicLong(0)
+    private var lastTickEndNanos = 0L
+    @Volatile private var dtSecondsForTelemetry = 0.0
+
+    /** Floor on integrated tick time. A tick that fires early or twice on the same sample must not
+     *  integrate zero (which would stall position) or a negative interval. */
+    private val MIN_TICK_SECONDS = 0.005
     @Volatile private var lastAnchorNanos = 0L
     @Volatile private var lastPublishedSpeedMps = 0f
 
@@ -172,7 +180,22 @@ class RealEngine(
     override fun start() {
         if (running) return
         running = true
-        scheduler.scheduleAtFixedRate({ safeTick() }, 0, periodMs, TimeUnit.MILLISECONDS)
+        // scheduleWithFixedDelay, not scheduleAtFixedRate (TODO.md K4).
+        //
+        // scheduleAtFixedRate targets absolute deadlines, so when the phone starves this thread it
+        // banks the missed runs and then fires them back to back with no spacing. Measured spacing
+        // on a real ride was p50 99 ms but p90 212 ms and p99 647 ms, while the tick's own compute
+        // cost was only 29.5 ms p95 -- the loop was not slow, it was starved and then bursting.
+        //
+        // Bursts are worse than lateness here: several ticks land on nearly the same IMU window,
+        // each integrating a real dt that has already been consumed by the one before. Fixed delay
+        // spaces every run from the END of the previous one, which cannot burst. Combined with real
+        // elapsed-time integration (K1), a late tick now integrates the time it actually covers
+        // instead of the engine silently losing it.
+        //
+        // The residual turn error is a pipeline lag of roughly 0.2 s -- about one tick period -- so
+        // steadier spacing shortens it directly.
+        scheduler.scheduleWithFixedDelay({ safeTick() }, 0, periodMs, TimeUnit.MILLISECONDS)
     }
 
     override fun stop() {
@@ -354,7 +377,35 @@ class RealEngine(
 
         val features = FeatureExtractor.featureWindow(rawWindow)
         val normalized = normalizer.apply(features)
-        val dtSeconds = 1.0 / config.outputRateHz
+        // REAL elapsed time, not the nominal tick period (TODO.md K1).
+        //
+        // This used to be `1.0 / config.outputRateHz`, a fixed 100 ms. Measured over a 106-minute
+        // ride, actual spacing was p50 99 ms but p90 212 ms and p99 647 ms: `scheduleAtFixedRate`
+        // is starved whenever the phone is busy, and the work itself is not the problem (tick p95
+        // compute is 29.5 ms). Integrating a nominal dt meant the engine advanced position for
+        // 20.5% LESS time than actually passed, and 25% less during outages.
+        //
+        // That was not a small error hiding in the noise -- it was cancelling most of the speed
+        // model's over-prediction, which is why GNSS-aided distance measured a flattering 0.98x.
+        // Expect distance to read LONGER after this change, not shorter: the compensation is gone
+        // and the model's real bias is now visible. That is the point.
+        //
+        // Clamped because a genuine stall (4.4 s was observed) must not be integrated as though the
+        // last known speed held across it. The gap is real; the speed estimate spanning it is not.
+        val elapsedSeconds = if (lastTickEndNanos == 0L) 1.0 / config.outputRateHz
+                             else (tEndNanos - lastTickEndNanos) / 1e9
+        val dtSeconds = elapsedSeconds.coerceIn(MIN_TICK_SECONDS, config.maxTickIntegrationSeconds)
+        if (elapsedSeconds > config.maxTickIntegrationSeconds) {
+            longTickCount.incrementAndGet()
+            if (longTickLogCounter++ % 10 == 0) {
+                System.err.println(
+                    "[RealEngine] tick spanned ${"%.1f".format(elapsedSeconds)}s, integrating only " +
+                        "${config.maxTickIntegrationSeconds}s — position will lag reality across this gap"
+                )
+            }
+        }
+        lastTickEndNanos = tEndNanos
+        dtSecondsForTelemetry = elapsedSeconds
         val inferStart = System.nanoTime()
         val vAbs = speedEstimator.estimate(normalized).coerceIn(config.speedMinMps, config.speedMaxMps)
         lastInferenceMs = (System.nanoTime() - inferStart) / 1_000_000f
@@ -433,7 +484,13 @@ class RealEngine(
         // -- the only direct observation of it available during a blackout (heading work plan F3).
         if (stationary) fusionFilter.updateStationaryGyro(lastYawRateRadS)
 
-        val speedMps = if (deltaEstimator != null && deltaNormalizer != null && lastAnchorNanos != 0L) {
+        // The delta model is gated OFF by default (TODO.md K2). It cannot do its job with the
+        // current feature set: `a_horiz` is a magnitude, so accelerating and braking are the same
+        // input, and the shipped weights return +0.30 m/s^2 for a hard-braking window. With it
+        // disabled the blend reduces to the GNSS anchor plus the absolute model, which is what it
+        // was actually doing anyway -- the delta term measured +0.01 m/s^2 in the field regardless
+        // of what the vehicle did.
+        val speedMps = if (config.useDeltaModel && deltaEstimator != null && deltaNormalizer != null && lastAnchorNanos != 0L) {
             val dvRaw = deltaEstimator.estimate(deltaNormalizer.apply(features))
                 .coerceIn(-4f, 4f)                    // physical sanity: > 0.4 g is not a car
             // Handling corrupts the delta model's input as thoroughly as the absolute model's, so
@@ -468,7 +525,22 @@ class RealEngine(
             }
             blendSpeedMps
         } else {
-            if (stationary) 0f else vAbs
+            // No delta term: fade from the GNSS anchor to the absolute model on the same timescale
+            // the blend has always used, rather than snapping to the absolute model the instant a
+            // fix is lost. lambda is still reported, so telemetry keeps its meaning.
+            val tSec = if (lastAnchorNanos == 0L) Double.MAX_VALUE
+                       else ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
+            val lam = if (tSec == Double.MAX_VALUE) 1f
+                      else (tSec / (tSec + config.blendTauSeconds)).toFloat()
+            lastLambda = lam
+            lastDvMps2 = Float.NaN
+            blendSpeedMps = when {
+                handling -> blendSpeedMps
+                stationary -> 0f
+                else -> ((1f - lam) * blendSpeedMps + lam * vAbs)
+                    .coerceIn(config.speedMinMps, config.speedMaxMps)
+            }
+            blendSpeedMps
         }
 
         // WALK-mode damping: car-trained models fabricate vehicle speeds from gait motion
@@ -606,6 +678,7 @@ class RealEngine(
                 gnssBearingDeg = lastGnssBearingDeg,
                 aHorizMps2 = features.last()[0],          // channel 0 is a_horiz
                 stationary = stationary,
+                tickIntervalMs = (dtSecondsForTelemetry * 1000.0).toFloat(),
                 tiltRateRadS = lastTiltRateRadS,
                 // The verdict, not whether it was acted on -- with the gate in measure-only mode
                 // this column is the whole point, and reporting `handling` would log all false.

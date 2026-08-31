@@ -28,6 +28,8 @@ object EngineConfigJson {
             zuptGyroThresholdRps = o.optDouble("zupt_gyro_threshold_rps", d.zuptGyroThresholdRps.toDouble()).toFloat(),
             handlingTiltRateThresholdRps = o.optDouble("handling_tilt_rate_threshold_rps", d.handlingTiltRateThresholdRps.toDouble()).toFloat(),
             useHandlingGate = o.optBoolean("use_handling_gate", d.useHandlingGate),
+            useDeltaModel = o.optBoolean("use_delta_model", d.useDeltaModel),
+            maxTickIntegrationSeconds = o.optDouble("max_tick_integration_seconds", d.maxTickIntegrationSeconds),
             handlingMaxCoastSeconds = o.optDouble("handling_max_coast_seconds", d.handlingMaxCoastSeconds),
             walkingSpeedScale = o.optDouble("walking_speed_scale", d.walkingSpeedScale.toDouble()).toFloat(),
             walkingSpeedMaxMps = o.optDouble("walking_speed_max_mps", d.walkingSpeedMaxMps.toDouble()).toFloat(),

@@ -23,10 +23,12 @@ class TripRecordingEngine(
 
     val isRecording: Boolean get() = synchronized(lock) { writer != null }
 
-    fun startRecording(traceFile: File) {
+    fun startRecording(traceFile: File) = startRecording(TraceWriter(traceFile))
+
+    fun startRecording(traceWriter: TraceWriter) {
         synchronized(lock) {
             writer?.close()
-            writer = TraceWriter(traceFile)
+            writer = traceWriter
             eventsSinceFlush = 0
         }
     }
