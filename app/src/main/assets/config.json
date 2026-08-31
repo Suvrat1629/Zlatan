@@ -18,6 +18,10 @@
   "max_speed_rise_mps2": 4.0,
   "max_speed_drop_mps2": 12.0,
   "gnss_lost_no_fix_timeout_ms": 3000,
+  "_comment_gnss_gate": "Escalating acceptance, not a binary gate. Strict 30 m while fixes flow; after gnss_starved_after_s with nothing accepted, fixes up to the ceiling pass through with their real accuracy. The old hardcoded binary 30 m gate locked GNSS out for 2h11m of an indoor session (9 sats in view, every fix >30 m) while the engine dead-reckoned 1.4 km of drift.",
+  "gnss_accuracy_gate_m": 30.0,
+  "gnss_starved_after_s": 10.0,
+  "gnss_starved_accuracy_ceiling_m": 150.0,
   "handover_slew_seconds": 1.5,
   "output_rate_hz": 10.0,
   "engine_tick_p95_budget_ms": 50.0

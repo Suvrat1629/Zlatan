@@ -64,7 +64,9 @@ object EngineFactory {
         )
     }
 
-    private fun loadConfig(context: Context): EngineConfig = try {
+    // Public so EngineService can hand config values to components built outside this factory
+    // (GnssSource's acceptance gates). Same asset, same parse, same fallback.
+    fun loadConfig(context: Context): EngineConfig = try {
         val json = context.assets.open(CONFIG_ASSET).bufferedReader().use { it.readText() }
         EngineConfigJson.parse(json)
     } catch (e: Exception) {
