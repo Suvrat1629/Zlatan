@@ -80,6 +80,12 @@ data class TelemetryTick(
     val inferenceMs: Float,
     /** Wall time for the whole engine tick, milliseconds. */
     val tickMs: Float,
+    /** The delta model's learned offset, m/s^2 — the amount already subtracted to produce
+     *  [dvMps2]. NaN when no delta model is loaded. Reads as a convergence check, the same way
+     *  [gyroBiasDps] does: it starts at 0 each session and should climb to a stable
+     *  device-specific value within roughly 20 fixes. One that keeps wandering is tracking
+     *  something other than a fixed model offset. */
+    val dvBiasMps2: Float,
 )
 
 /** A moment the tester flagged, or an automatic event worth finding again in the log. */

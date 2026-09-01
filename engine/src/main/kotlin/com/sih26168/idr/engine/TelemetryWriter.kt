@@ -34,6 +34,9 @@ import java.io.File
  * Version 7 adds `tick_interval_ms` — the real elapsed time a tick covered. The engine used to
  * integrate a nominal 100 ms regardless, losing 20.5% of elapsed time on a real ride, and nothing
  * in the log made that visible.
+ *
+ * Version 8 adds `dv_bias_mps2`, the delta model's learned device offset. It was previously
+ * visible only in a stdout line, so no drive could show whether it converged.
  */
 class TelemetryWriter(
     private val writer: BufferedWriter,
@@ -47,7 +50,7 @@ class TelemetryWriter(
     private var rows = 0
 
     init {
-        writer.write("#schema=7")
+        writer.write("#schema=8")
         writer.newLine()
         writer.write(HEADER)
         writer.newLine()
@@ -64,7 +67,7 @@ class TelemetryWriter(
                 t.lat, t.lon, t.gnssLat, t.gnssLon, t.uncertaintyM,
                 t.gyroBiasDps, t.headingUncertaintyDeg, t.gnssNis, t.yawClampCount,
                 if (t.mapMatchOnRoad) 1 else 0, t.mapMatchUncertaintyM,
-                t.inferenceMs, t.tickMs,
+                t.inferenceMs, t.tickMs, t.dvBiasMps2,
             ).joinToString(",")
         )
         writer.newLine()
@@ -86,7 +89,7 @@ class TelemetryWriter(
                 "yaw_rate_rad_s,heading_deg,gnss_bearing_deg,a_horiz_mps2," +
                 "stationary,tick_interval_ms,tilt_rate_rps,handling,vehicle_mode,gnss_muted,mode,sats,irnss_sats,lat,lon,gnss_lat,gnss_lon,uncertainty_m," +
                 "gyro_bias_dps,heading_unc_deg,gnss_nis,yaw_clamp_count," +
-                "map_on_road,map_unc_m,inference_ms,tick_ms"
+                "map_on_road,map_unc_m,inference_ms,tick_ms,dv_bias_mps2"
     }
 }
 
