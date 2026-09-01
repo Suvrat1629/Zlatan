@@ -31,6 +31,51 @@ data class EngineConfig(
      */
     val blendTauSeconds: Double = 240.0,
 
+    /**
+     * Ceiling on the blend weight given to the absolute speed model, 0..1.
+     *
+     * The blend fades from the GNSS anchor toward the model as `lam = t/(t+tau)`, and with no cap
+     * `lam` reaches 1: given a long enough outage the model replaces the constant-velocity prior
+     * entirely. That is only safe if the model beats constant velocity, and on a two-wheeler it
+     * emphatically does not.
+     *
+     * Measured 2026-09-02 over 238 s of continuous motorbike riding with GNSS live throughout
+     * (1,704 labelled windows, `rides/ride_20260902_015526.npz`):
+     *
+     *   correlation with true speed   r = 0.19, r-squared = 0.037
+     *   model MAE                     2.84 m/s
+     *   MAE of simply predicting the median speed   1.46 m/s
+     *
+     * **The model is worse than a constant.** Checked at every lag from -3 s to +3 s and after 3 s
+     * smoothing; it never rises. The same weights report R-squared 0.66 on the IO-VNBD test set,
+     * which is cars — this is a domain failure on two-wheelers, not a tuning problem.
+     *
+     * So the model may inform the estimate but must not own it. 0.5 keeps the constant-velocity
+     * prior worth at least as much as the model at any outage length. Raise it once a retrain on
+     * target-vehicle data shows the model beating a constant on that vehicle — the number is a
+     * statement about model quality, so it moves when the model does.
+     */
+    val blendMaxLambda: Float = 0.5f,
+
+    /**
+     * Ceiling on the blend weight given to the speed model when the vehicle mode is BIKE.
+     *
+     * The model is trained on IO-VNBD, which is cars, and validated on cars at R-squared 0.66. On a
+     * two-wheeler it scores **R-squared 0.037 with an MAE of 2.84 m/s, against 1.46 m/s for simply
+     * predicting the median** — worse than ignoring the sensors
+     * (`wiki/notes/idr-model-domain-failure-2026-09-02.md`).
+     *
+     * Trust it where it was validated and distrust it where it was measured to fail. That is not
+     * caution, it is the evidence: a predictor that loses to a constant should not be given weight
+     * against the constant-velocity prior, and the vehicle selector already tells us which case we
+     * are in.
+     *
+     * 0.05 rather than 0 so the value stays a weight rather than a special case, and so telemetry
+     * still shows the model's contribution being made and discarded. Raise it the moment a retrain
+     * beats a constant on a two-wheeler.
+     */
+    val blendMaxLambdaBike: Float = 0.05f,
+
     // ZUPT: below BOTH thresholds over a window, speed is clamped to 0 instantly.
     val zuptAccelThresholdMps2: Float = 0.8f,
     val zuptGyroThresholdRps: Float = 0.15f,
@@ -275,6 +320,26 @@ data class EngineConfig(
     // 271 deg/s while walking, which is hand motion being integrated as vehicle rotation. A
     // magnitude clamp cannot harm a genuine turn -- unlike the low-pass that was considered and
     // rejected, which would smear a real turn's onset by a few hundred milliseconds.
+    /**
+     * Yaw-rate bound for a two-wheeler, deg/s. Overrides [maxYawRateDps] when the vehicle mode is
+     * BIKE.
+     *
+     * A car body cannot rotate quickly; a leaning two-wheeler can. Measured on a motorbike ride
+     * 2026-09-01: projected yaw reached **190 deg/s** with p99.9 at 102, and the samples above the
+     * 90 deg/s bound were NOT isolated spikes — mean yaw in the 300 ms around each one was
+     * **41 deg/s**, the signature of a genuine sustained turn. The bound was cutting into real turn
+     * dynamics, costing about 5 degrees of true rotation across a 4.4 minute ride.
+     *
+     * This also corrects the reasoning in TODO.md G4, which argued that "a genuine vehicle turn
+     * never approaches 90 deg/s". True for a car, false for a bike, and the bound was applied to
+     * both.
+     *
+     * 200 sits above the measured maximum for a real turn and below the 271 deg/s recorded while
+     * walking, which is the motion the bound exists to reject. The per-mode split is what makes both
+     * numbers honest: one bound cannot serve a car body and a leaning bike.
+     */
+    val maxYawRateBikeDps: Float = 200f,
+
     val maxYawRateDps: Float = 90f,
     // Switches RealEngine's fusion filter from PassthroughFusionFilter (hard-snap to each
     // GNSS fix) to ErrorStateEkf. See plan2.md for what's actually been validated.

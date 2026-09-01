@@ -62,7 +62,18 @@ class RealEngine(
     override val state: StateFlow<PositionState> = _state.asStateFlow()
 
     /** Physical yaw-rate bound, from config so it is tunable per vehicle class rather than baked in. */
-    private val maxYawRateRadS: Float = Math.toRadians(config.maxYawRateDps.toDouble()).toFloat()
+    private val maxYawRateCarRadS: Float = Math.toRadians(config.maxYawRateDps.toDouble()).toFloat()
+    private val maxYawRateBikeRadS: Float = Math.toRadians(config.maxYawRateBikeDps.toDouble()).toFloat()
+
+    /** A leaning two-wheeler genuinely out-rotates a car body — measured 190 deg/s inside a real
+     *  turn against a 90 deg/s bound that was cutting into it (TODO.md K11). */
+    /** The speed model is validated on cars and measured to lose to a constant on two-wheelers,
+     *  so its weight is capped per vehicle mode rather than globally (TODO.md L4). */
+    private val activeBlendMaxLambda: Float
+        get() = if (vehicleMode == VehicleMode.BIKE) config.blendMaxLambdaBike else config.blendMaxLambda
+
+    private val maxYawRateRadS: Float
+        get() = if (vehicleMode == VehicleMode.BIKE) maxYawRateBikeRadS else maxYawRateCarRadS
     private val yawClampCount = java.util.concurrent.atomic.AtomicLong(0)
 
     @Volatile private var lastYawRateRadS = 0f
@@ -512,7 +523,7 @@ class RealEngine(
             val dv = dvRaw - dvBiasMps2               // online bias correction (learned vs GNSS)
             lastDvMps2 = dv
             val tSec = ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
-            val lam = (tSec / (tSec + config.blendTauSeconds)).toFloat()
+            val lam = (tSec / (tSec + config.blendTauSeconds)).toFloat().coerceAtMost(activeBlendMaxLambda)
             lastLambda = lam
             // Hold the blend's INTERNAL state too, not just the published output. Letting it keep
             // integrating while the published speed is held would hide the garbage rather than
@@ -539,7 +550,7 @@ class RealEngine(
             val tSec = if (lastAnchorNanos == 0L) Double.MAX_VALUE
                        else ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
             val lam = if (tSec == Double.MAX_VALUE) 1f
-                      else (tSec / (tSec + config.blendTauSeconds)).toFloat()
+                      else (tSec / (tSec + config.blendTauSeconds)).toFloat().coerceAtMost(activeBlendMaxLambda)
             lastLambda = lam
             lastDvMps2 = Float.NaN
             blendSpeedMps = when {
