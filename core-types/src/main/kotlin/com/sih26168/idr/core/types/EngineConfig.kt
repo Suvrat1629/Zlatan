@@ -76,6 +76,19 @@ data class EngineConfig(
     val ekfMinBearingTrustSpeedMps: Float = 3f,
     val ekfGnssBearingNoiseDeg: Float = 5f,
 
+    // Road bearing as a heading measurement for the EKF. The pre-EKF engine already pulled the
+    // gyro heading toward the matched road's bearing (see roadHeadingGain below); that correction
+    // went dark when the EKF took ownership of heading, because nudging the gyro estimator
+    // underneath the filter would inject the whole correction as unweighted rotation. This is the
+    // same correction re-entered the right way: as a weighted measurement on theta, under the
+    // same gates. On by default -- it restores shipped behaviour rather than adding a new fusion
+    // input, and unlike useMapMatchFusion it cannot move position, only heading.
+    val useRoadBearingHeading: Boolean = true,
+    // Wider than the GNSS bearing noise on purpose: a road's bearing is its polyline's bearing, so
+    // a gentle curve or a wide junction sits 10-15 degrees off the vehicle's true heading. The
+    // road is the fallback reference, not the better one.
+    val ekfRoadBearingNoiseDeg: Float = 10f,
+
     // --- gyro bias state (heading work plan F3) ---
     // The error budget needs the yaw-rate bias held near 0.01 deg/s to keep cross-track inside
     // budget over a 60 s outage; consumer MEMS in-run bias instability sits well above that, and

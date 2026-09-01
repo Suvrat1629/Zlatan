@@ -126,6 +126,11 @@ class ErrorStateEkf(
 
         p = add(matMul(matMul(f, p), transpose(f)), q)
         symmetrize()
+        // Keep theta in (-pi, pi]. headingDeg() wraps on read, so the published value was always
+        // right, but the stored angle itself grew without bound -- every lap of a roundabout added
+        // 2*pi. Innovations are differences against theta, and a double loses absolute precision as
+        // its magnitude grows, so an unwrapped angle quietly degrades every heading measurement.
+        theta = wrapToPi(theta)
     }
 
     override fun updateWithGnss(fix: LatLon, speedMps: Float, bearingDeg: Float, horizAccM: Float, bearingValid: Boolean) {
@@ -206,10 +211,29 @@ class ErrorStateEkf(
         // a minimum speed (bearing is unreliable near-stationary).
         if (bearingValid && speedMps > config.ekfMinBearingTrustSpeedMps) {
             val bearingRad = Math.toRadians(bearingDeg.toDouble())
-            val yTheta = ((bearingRad - theta + Math.PI).mod(2 * Math.PI)) - Math.PI
+            val yTheta = wrapToPi(bearingRad - theta)
             val rTheta = Math.toRadians(config.ekfGnssBearingNoiseDeg.toDouble()).let { it * it }
             updateScalar(2, yTheta, rTheta)
         }
+    }
+
+    /**
+     * Road bearing as a heading measurement. The road under the vehicle is an absolute heading
+     * reference the gyro does not have, and unlike GNSS course it survives a blackout -- on a long
+     * straight, where heading random walk is the dominant cross-track error, it is the only
+     * absolute reference available.
+     *
+     * The innovation wraps to +/-pi/2, not +/-pi, because a way's direction of travel is arbitrary:
+     * a road drawn south-to-north and one drawn north-to-south describe the same road. Wrapping to
+     * a quarter turn resolves that 180-degree ambiguity toward whichever end the filter already
+     * believes in, which is also why a bearing exactly reversed from the true heading produces the
+     * same correction as an aligned one.
+     */
+    override fun updateWithRoadBearing(roadBearingDeg: Double, sigmaDeg: Float) {
+        val bearingRad = Math.toRadians(roadBearingDeg)
+        val y = ((bearingRad - theta + Math.PI / 2).mod(Math.PI)) - Math.PI / 2
+        val r = Math.toRadians(sigmaDeg.toDouble()).let { it * it }
+        updateScalar(2, y, r)
     }
 
     override fun updateWithMapMatch(
@@ -318,6 +342,10 @@ class ErrorStateEkf(
         /** Below this per-tick rotation the arc and the straight segment agree to well under a
          *  millimetre at road speed, and the v/omega division would be numerically pointless. */
         private const val ARC_MIN_DTHETA = 1e-6
+
+        /** Shortest signed angle in (-pi, pi]. */
+        private fun wrapToPi(radians: Double): Double =
+            ((radians + Math.PI).mod(2 * Math.PI)) - Math.PI
 
         /** State dimension: [n, e, theta, biasZ]. */
         const val N = 4
