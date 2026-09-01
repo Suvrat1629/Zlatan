@@ -103,6 +103,9 @@ class TelemetryUploader : Closeable {
             // distributions. Without them the one drive that is supposed to settle those questions
             // uploads no evidence for any of them.
             putFinite("gyro_bias_dps", t.gyroBiasDps)
+            // The delta model's learned device offset, same reasoning: it converges or it does not,
+            // and a stdout line cannot say which after the fact.
+            putFinite("dv_bias", t.dvBiasMps2)
             putFinite("heading_unc_deg", t.headingUncertaintyDeg)
             putFinite("gnss_nis", t.gnssNis)
             put("yaw_clamp_count", t.yawClampCount)
@@ -216,6 +219,7 @@ class TelemetryUploader : Closeable {
         private val EXTENDED_COLUMNS = listOf(
             "gyro_bias_dps", "heading_unc_deg", "gnss_nis", "yaw_clamp_count",
             "map_on_road", "map_unc_m", "tilt_rate_rps", "handling", "vehicle_mode", "gnss_muted", "tick_interval_ms",
+            "dv_bias",
         )
     }
 }
