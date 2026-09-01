@@ -41,6 +41,10 @@ class RealEngine(
     // the engine publishes the absolute model's speed exactly as before.
     private val deltaEstimator: SpeedEstimator? = null,
     private val deltaNormalizer: Normalizer? = null,
+    // Previous session's learned delta-model offset, or 0 for a first run. See DvBiasEstimator:
+    // the estimate takes ~20 trusted fixes to converge, and it is a property of the device and
+    // the model rather than of the trip, so last session's answer beats starting from zero.
+    initialDvBiasMps2: Float = 0f,
 
     ringBufferCapacitySamples: Int = 4000,
 ) : PositioningEngine {
@@ -116,6 +120,7 @@ class RealEngine(
         alpha = config.dvBiasEmaAlpha,
         minFixDtSeconds = config.dvBiasFixDtMinSeconds,
         maxFixDtSeconds = config.dvBiasFixDtMaxSeconds,
+        initialBiasMps2 = initialDvBiasMps2,
     )
 
     // Map-match fusion only runs when the matcher actually emits a fusable covariance (the
