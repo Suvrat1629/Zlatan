@@ -85,7 +85,13 @@ class EngineService : Service() {
         createNotificationChannel()
         try {
             sensorSource = SensorSource(this, recordingEngine)
-            gnssSource = GnssSource(this, recordingEngine)
+            val config = EngineFactory.loadConfig(this)
+            gnssSource = GnssSource(
+                this, recordingEngine,
+                accuracyGateM = config.gnssAccuracyGateM,
+                starvedAfterSeconds = config.gnssStarvedAfterSeconds,
+                starvedAccuracyCeilingM = config.gnssStarvedAccuracyCeilingM,
+            )
         } catch (e: SensorSource.NoGyroscopeException) {
             startupFailed = true
             Toast.makeText(this, getString(R.string.no_gyroscope_error), Toast.LENGTH_LONG).show()

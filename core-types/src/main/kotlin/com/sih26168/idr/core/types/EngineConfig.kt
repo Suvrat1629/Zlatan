@@ -173,6 +173,17 @@ data class EngineConfig(
     // update must be a near-no-op and must not shrink the along-track covariance.
     val mapMatchAlongTrackSigmaM: Float = 10_000f,
 
+    // GNSS pre-filter acceptance (GnssSource). A binary hardcoded 30 m accuracy gate locked
+    // GNSS out for 2h11m of a stationary indoor session (9 satellites in view, every fix
+    // reporting accuracy >30 m) while the engine dead-reckoned 1.4 km of drift. The gate now
+    // escalates: strict [gnssAccuracyGateM] while fixes flow; after [gnssStarvedAfterSeconds]
+    // with nothing accepted, fixes up to [gnssStarvedAccuracyCeilingM] pass through with their
+    // real horizontal accuracy so downstream weighting can discount them instead of the
+    // pre-filter pretending they don't exist.
+    val gnssAccuracyGateM: Float = 30f,
+    val gnssStarvedAfterSeconds: Float = 10f,
+    val gnssStarvedAccuracyCeilingM: Float = 150f,
+
     val outputRateHz: Double = 10.0,
 
     val engineTickP95BudgetMs: Float = 50f,

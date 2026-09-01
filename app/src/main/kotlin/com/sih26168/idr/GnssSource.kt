@@ -16,6 +16,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 class GnssSource(
     context: Context,
     private val engine: PositioningEngine,
+    private val accuracyGateM: Float = 30f,
+    private val starvedAfterSeconds: Float = 10f,
+    private val starvedAccuracyCeilingM: Float = 150f,
 ) {
     @Volatile var gnssMuted: Boolean = false
 
@@ -28,6 +31,7 @@ class GnssSource(
     @Volatile private var satsInFix = 0
     @Volatile private var irnssSatsInFix = 0
     @Volatile private var lastFixElapsedRealtimeNanos = 0L
+    @Volatile private var lastAcceptedElapsedNanos = 0L
 
     private val gnssStatusCallback = object : GnssStatus.Callback() {
         override fun onSatelliteStatusChanged(status: GnssStatus) {
@@ -49,15 +53,30 @@ class GnssSource(
         lastFixElapsedRealtimeNanos = nowElapsedRealtimeNanos
         if (gnssMuted) return@LocationListener
 
+        // Escalating accuracy gate (EngineConfig.gnssAccuracyGateM and friends): strict while
+        // fixes are flowing, but once the engine has been starved past starvedAfterSeconds the
+        // ceiling takes over and the fix goes through with its REAL horizontal accuracy, so
+        // downstream weighting can discount it instead of the pre-filter pretending it doesn't
+        // exist. A binary 30 m gate with no recovery path once locked GNSS out for 2h11m of a
+        // stationary indoor session while the engine integrated 1.4 km of drift.
+        val starvedNanos = lastAcceptedElapsedNanos.let {
+            if (it == 0L) Long.MAX_VALUE else nowElapsedRealtimeNanos - it
+        }
+        val starved = starvedNanos > (starvedAfterSeconds * 1e9).toLong()
+        val gateM = if (starved) starvedAccuracyCeilingM else accuracyGateM
         val accuracyM = if (location.hasAccuracy()) location.accuracy else null
-        if (accuracyM != null && accuracyM > MAX_ACCEPTABLE_ACCURACY_M) {
-            System.err.println("[GnssSource] rejected fix with accuracy ${accuracyM}m (multipath/poor geometry) — over ${MAX_ACCEPTABLE_ACCURACY_M}m threshold")
+        if (accuracyM != null && accuracyM > gateM) {
+            System.err.println("[GnssSource] rejected fix with accuracy ${accuracyM}m (multipath/poor geometry) — over ${gateM}m threshold")
             return@LocationListener
         }
         if (satsInFix in 1 until MIN_SATS_FOR_TRUST) {
             System.err.println("[GnssSource] rejected fix with only $satsInFix satellites — under ${MIN_SATS_FOR_TRUST} sats, geometry too weak to trust (this is exactly what causes standing-still jitter)")
             return@LocationListener
         }
+        if (starved && accuracyM != null && accuracyM > accuracyGateM) {
+            System.err.println("[GnssSource] accepting degraded fix (accuracy ${accuracyM}m) after ${starvedNanos / 1_000_000_000}s without an accepted fix")
+        }
+        lastAcceptedElapsedNanos = nowElapsedRealtimeNanos
 
         engine.onGnssFix(
             tNanos = nowElapsedRealtimeNanos,
@@ -97,7 +116,6 @@ class GnssSource(
     }
 
     companion object {
-        private const val MAX_ACCEPTABLE_ACCURACY_M = 30f
         private const val MIN_SATS_FOR_TRUST = 4
     }
 }
