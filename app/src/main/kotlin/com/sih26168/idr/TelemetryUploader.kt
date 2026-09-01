@@ -87,6 +87,18 @@ class TelemetryUploader : Closeable {
             putFinite("gnss_lat", t.gnssLat)
             putFinite("gnss_lon", t.gnssLon)
             putFinite("uncertainty_m", t.uncertaintyM)
+            // Filter state and gate statistics. These were in the on-device CSV from the start
+            // but never uploaded, so the dashboard could not answer the two questions the
+            // calibrators exist to raise: did the gyro bias converge, and did the delta-model
+            // offset converge. yaw_clamp_count and gnss_nis are what decide whether the NIS gate
+            // can be switched from measuring to rejecting.
+            putFinite("gyro_bias_dps", t.gyroBiasDps)
+            putFinite("dv_bias", t.dvBiasMps2)
+            putFinite("heading_unc_deg", t.headingUncertaintyDeg)
+            putFinite("gnss_nis", t.gnssNis)
+            put("yaw_clamp_count", t.yawClampCount)
+            put("map_on_road", t.mapMatchOnRoad)
+            putFinite("map_unc_m", t.mapMatchUncertaintyM)
             putFinite("inference_ms", t.inferenceMs)
             putFinite("tick_ms", t.tickMs)
         })
@@ -122,7 +134,15 @@ class TelemetryUploader : Closeable {
             conn.outputStream.use { it.write(batch.toString().toByteArray()) }
             val code = conn.responseCode
             if (code !in 200..299) {
-                System.err.println("[TelemetryUploader] upload failed HTTP $code — rows dropped")
+                // Include the body: a schema mismatch (PGRST204, "Could not find the 'x' column")
+                // is otherwise indistinguishable from an auth or network fault, and it is the
+                // failure a new payload column actually causes. See supabase/add_filter_columns.sql.
+                val body = try {
+                    conn.errorStream?.bufferedReader()?.use { it.readText() }?.take(300).orEmpty()
+                } catch (e: Exception) {
+                    ""
+                }
+                System.err.println("[TelemetryUploader] upload failed HTTP $code — rows dropped. $body")
             }
             conn.disconnect()
         } catch (e: Exception) {
