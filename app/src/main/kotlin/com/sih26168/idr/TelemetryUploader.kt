@@ -99,6 +99,8 @@ class TelemetryUploader : Closeable {
             put("yaw_clamp_count", t.yawClampCount)
             put("map_on_road", t.mapMatchOnRoad)
             putFinite("map_unc_m", t.mapMatchUncertaintyM)
+            putFinite("mag_heading_deg", t.magHeadingDeg)
+            put("mag_accuracy", t.magAccuracy)
             putFinite("inference_ms", t.inferenceMs)
             putFinite("tick_ms", t.tickMs)
         })
