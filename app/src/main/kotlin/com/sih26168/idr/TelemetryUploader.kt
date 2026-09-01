@@ -101,6 +101,7 @@ class TelemetryUploader : Closeable {
             putFinite("map_unc_m", t.mapMatchUncertaintyM)
             putFinite("mag_heading_deg", t.magHeadingDeg)
             put("mag_accuracy", t.magAccuracy)
+            putFinite("mount_offset_deg", t.mountOffsetDeg)
             putFinite("inference_ms", t.inferenceMs)
             putFinite("tick_ms", t.tickMs)
         })

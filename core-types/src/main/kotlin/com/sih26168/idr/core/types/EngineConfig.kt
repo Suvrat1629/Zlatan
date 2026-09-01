@@ -94,6 +94,40 @@ data class EngineConfig(
     // few degrees. Rate-limit to segment changes if it fights GNSS bearing on a real drive.
     val ekfRoadBearingNoiseDeg: Float = 10f,
 
+    // --- compass as a heading measurement, with the mount offset as a state ---
+    // The compass reads the PHONE's azimuth; the filter tracks the VEHICLE's heading. They differ
+    // by however the driver seated the phone, so the compass is unusable until that offset is
+    // known -- and it cannot be known in advance. Carried as a filter state instead: with a wide
+    // prior on the offset and a tight one on heading, an early compass reading corrects the offset;
+    // once the offset has converged and GNSS drops, the same reading corrects heading. The
+    // covariance decides which, so there is no mode to switch and get wrong.
+    //
+    // OFF by default. Unlike useRoadBearingHeading this is a genuinely new fusion input, not a
+    // restored one, and the magnetometer is the sensor the integration contract excluded for
+    // vehicle distortion. Turn it on after a drive where telemetry's (mag_heading_deg - heading)
+    // residual looks steady per mount at mag_accuracy = 3, which is what the compass columns were
+    // added to answer.
+    val useMagHeading: Boolean = false,
+    /** Prior 1-std on the mount offset, degrees. Enormous on purpose: the phone's orientation in
+     *  the cradle is genuinely unknown, and this wide prior is what routes the first compass
+     *  innovation into the offset rather than into heading. */
+    val ekfInitialMountOffsetDeg: Float = 180f,
+    /** Mount-offset random walk, deg per sqrt(second). Small but never zero: a converged offset
+     *  with no process noise could never recover from the phone being knocked or re-seated
+     *  mid-drive, which is the only thing that actually changes it. Sized by measurement, not
+     *  taste -- MagneticHeadingTest.recoversAfterThePhoneIsReSeated drives a worst-case 180-degree
+     *  re-seat, and the recovery times are 0.05 -> ~5 min, 0.2 -> ~60 s, 0.5 -> ~30 s. 0.2 is the
+     *  slowest value that recovers inside a minute, and it stays a factor of 20 below the heading
+     *  ARW, so during a blackout the compass innovation still lands on heading rather than being
+     *  absorbed by an offset that has gone soft. */
+    val ekfMountOffsetRandomWalkDegPerSqrtSec: Float = 0.2f,
+    /** Compass measurement noise at the vendor's HIGH accuracy rating. Wider than GNSS bearing:
+     *  even a well-calibrated compass sits inside a steel box with a running motor in it. */
+    val ekfMagHeadingNoiseHighDeg: Float = 10f,
+    /** At MEDIUM. Wide enough that a mediocre reading nudges rather than steers; LOW and
+     *  UNRELIABLE are not used at all. */
+    val ekfMagHeadingNoiseMediumDeg: Float = 25f,
+
     // --- gyro bias state (heading work plan F3) ---
     // The error budget needs the yaw-rate bias held near 0.01 deg/s to keep cross-track inside
     // budget over a 60 s outage; consumer MEMS in-run bias instability sits well above that, and

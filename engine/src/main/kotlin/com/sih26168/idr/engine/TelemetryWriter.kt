@@ -31,7 +31,7 @@ class TelemetryWriter(
     private var rows = 0
 
     init {
-        writer.write("#schema=5")
+        writer.write("#schema=6")
         writer.newLine()
         writer.write(HEADER)
         writer.newLine()
@@ -48,6 +48,7 @@ class TelemetryWriter(
                 t.gyroBiasDps, t.headingUncertaintyDeg, t.gnssNis, t.yawClampCount,
                 if (t.mapMatchOnRoad) 1 else 0, t.mapMatchUncertaintyM,
                 t.inferenceMs, t.tickMs, t.dvBiasMps2, t.magHeadingDeg, t.magAccuracy,
+                t.mountOffsetDeg,
             ).joinToString(",")
         )
         writer.newLine()
@@ -70,7 +71,7 @@ class TelemetryWriter(
                 "stationary,mode,sats,irnss_sats,lat,lon,gnss_lat,gnss_lon,uncertainty_m," +
                 "gyro_bias_dps,heading_unc_deg,gnss_nis,yaw_clamp_count," +
                 "map_on_road,map_unc_m,inference_ms,tick_ms,dv_bias_mps2," +
-                "mag_heading_deg,mag_accuracy"
+                "mag_heading_deg,mag_accuracy,mount_offset_deg"
     }
 }
 

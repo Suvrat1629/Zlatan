@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.hardware.GeomagneticField
 import android.location.LocationManager
 import android.os.Binder
 import android.os.Build
@@ -91,7 +92,16 @@ class EngineService : Service() {
 
         createNotificationChannel()
         try {
-            sensorSource = SensorSource(this, recordingEngine)
+            sensorSource = SensorSource(this, recordingEngine).apply {
+                // Magnetic declination turns the compass's magnetic azimuth into the true-north
+                // frame the filter and GNSS bearing already use. Roughly -1 degree in Bengaluru,
+                // and it varies by about 0.01 deg/km, so one reading at start covers a drive.
+                lastKnown?.let {
+                    declinationDeg = GeomagneticField(
+                        it.lat.toFloat(), it.lon.toFloat(), 0f, System.currentTimeMillis(),
+                    ).declination
+                }
+            }
             val config = EngineFactory.loadConfig(this)
             gnssSource = GnssSource(
                 this, recordingEngine,
