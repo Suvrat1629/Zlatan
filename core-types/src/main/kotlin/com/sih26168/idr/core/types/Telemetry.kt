@@ -86,6 +86,15 @@ data class TelemetryTick(
      *  device-specific value within roughly 20 fixes. One that keeps wandering is tracking
      *  something other than a fixed model offset. */
     val dvBiasMps2: Float,
+    /** Tilt-compensated compass azimuth, degrees clockwise from MAGNETIC north. NaN until the
+     *  first usable reading, and on a phone with no magnetometer. Recorded, never fused: this
+     *  is the phone's azimuth, not the vehicle's heading, and the offset between them depends on
+     *  the mount. Read it against [headingDeg] — a residual that holds steady per mount at HIGH
+     *  accuracy is what would justify building the mount-offset calibrator that fusing it needs. */
+    val magHeadingDeg: Float,
+    /** The vendor's own confidence in [magHeadingDeg]: SensorManager.SENSOR_STATUS_* (0 unreliable
+     *  to 3 high), or -1 before any reading. Only HIGH readings mean anything for the residual. */
+    val magAccuracy: Int,
 )
 
 /** A moment the tester flagged, or an automatic event worth finding again in the log. */

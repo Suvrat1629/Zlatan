@@ -87,6 +87,13 @@ class RealEngine(
     @Volatile private var lastGnssLon = Double.NaN
     @Volatile private var lastInferenceMs = Float.NaN
     @Volatile private var lastDvMps2 = Float.NaN
+
+    // Compass, recorded but never fused -- see PositioningEngine.onMagneticHeading. The pair the
+    // dashboard is for is (magHeading - publishedHeading): if that residual is a stable constant
+    // per mount at HIGH accuracy, a mount-offset calibrator is worth building; if it wanders, the
+    // vehicle-distortion call in the integration contract stands and it is not.
+    @Volatile private var lastMagHeadingDeg = Float.NaN
+    @Volatile private var lastMagAccuracy = -1
     @Volatile private var lastLambda = Float.NaN
     // Swapped in and out as recording starts and stops: the engine outlives any one session.
     @Volatile private var diagnostics: Diagnostics? = null
@@ -154,6 +161,11 @@ class RealEngine(
      */
     @Volatile private var gnssMuted = false
     fun setGnssMuted(muted: Boolean) { gnssMuted = muted }
+
+    override fun onMagneticHeading(tNanos: Long, magneticHeadingDeg: Float, accuracy: Int) {
+        lastMagHeadingDeg = magneticHeadingDeg
+        lastMagAccuracy = accuracy
+    }
 
     // Online delta-bias calibration (doc §14: "online recalibration against GNSS").
     // See DvBiasEstimator for what it corrects and why the state lives outside this class.
@@ -755,6 +767,8 @@ class RealEngine(
                 // NaN, not 0, when there is no delta model: 0 is a legitimate converged estimate
                 // and must not be confused with "this loop never ran".
                 dvBiasMps2 = if (deltaEstimator != null) dvBias.biasMps2 else Float.NaN,
+                magHeadingDeg = lastMagHeadingDeg,
+                magAccuracy = lastMagAccuracy,
             )
             diagnostics?.onTick(tick)
             telemetryWriter?.write(tick)

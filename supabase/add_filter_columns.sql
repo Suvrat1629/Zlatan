@@ -26,4 +26,11 @@ alter table public.telemetry
 
     -- Map matching, display-only today (use_map_match_fusion is off).
     add column if not exists map_on_road      boolean,
-    add column if not exists map_unc_m        double precision;
+    add column if not exists map_unc_m        double precision,
+
+    -- Compass, recorded and never fused. mag_heading_deg is the phone's azimuth from MAGNETIC
+    -- north; the filter's heading is the vehicle's. The question a drive answers is whether
+    -- (mag_heading_deg - heading) holds steady per mount while mag_accuracy = 3, which is what
+    -- would justify building the mount-offset calibrator that fusing the compass needs.
+    add column if not exists mag_heading_deg  double precision,
+    add column if not exists mag_accuracy     integer;

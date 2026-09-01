@@ -119,6 +119,8 @@ class TelemetryUploader : Closeable {
             put("handling", t.handling)
             put("vehicle_mode", t.vehicleMode.name)
             put("gnss_muted", t.gnssMuted)
+            putFinite("mag_heading_deg", t.magHeadingDeg)
+            put("mag_accuracy", t.magAccuracy)
             putFinite("inference_ms", t.inferenceMs)
             putFinite("tick_ms", t.tickMs)
         }
@@ -219,7 +221,7 @@ class TelemetryUploader : Closeable {
         private val EXTENDED_COLUMNS = listOf(
             "gyro_bias_dps", "heading_unc_deg", "gnss_nis", "yaw_clamp_count",
             "map_on_road", "map_unc_m", "tilt_rate_rps", "handling", "vehicle_mode", "gnss_muted", "tick_interval_ms",
-            "dv_bias",
+            "dv_bias", "mag_heading_deg", "mag_accuracy",
         )
     }
 }
