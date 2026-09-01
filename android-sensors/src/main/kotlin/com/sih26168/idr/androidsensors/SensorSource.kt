@@ -14,6 +14,15 @@ class SensorSource(
     context: Context,
     private val engine: PositioningEngine,
 ) {
+    /**
+     * Magnetic declination at the vehicle's location, degrees east of true north. Set by whoever
+     * knows where the vehicle is; 0 until then, which costs about a degree in India.
+     *
+     * ponytail: set once at service start from the last known location. Declination changes by
+     * roughly 0.01 deg/km, so a whole drive moves it well inside the compass's own 10 deg noise
+     * floor -- refresh per fix only if a session ever crosses hundreds of kilometres.
+     */
+    @Volatile var declinationDeg: Float = 0f
     class NoGyroscopeException : IllegalStateException(
         "This device has no gyroscope. IDR cannot function without one " +
             "(docs/architecture-android.md §12 caveat 1) — refuse clearly, don't silently degrade."
@@ -83,7 +92,7 @@ class SensorSource(
         lastMagneticEmitNanos = event.timestamp
         SensorManager.getOrientation(rotationMatrix, orientation)
         val headingDeg = (Math.toDegrees(orientation[0].toDouble()) + 360.0).mod(360.0)
-        engine.onMagneticHeading(event.timestamp, headingDeg.toFloat(), event.accuracy)
+        engine.onMagneticHeading(event.timestamp, headingDeg.toFloat(), event.accuracy, declinationDeg)
     }
 
     private fun validateTimestampBase(firstEventTimestampNanos: Long) {

@@ -94,6 +94,7 @@ class RealEngine(
     // vehicle-distortion call in the integration contract stands and it is not.
     @Volatile private var lastMagHeadingDeg = Float.NaN
     @Volatile private var lastMagAccuracy = -1
+    @Volatile private var lastDeclinationDeg = 0f
     @Volatile private var lastLambda = Float.NaN
     // Swapped in and out as recording starts and stops: the engine outlives any one session.
     @Volatile private var diagnostics: Diagnostics? = null
@@ -162,9 +163,32 @@ class RealEngine(
     @Volatile private var gnssMuted = false
     fun setGnssMuted(muted: Boolean) { gnssMuted = muted }
 
-    override fun onMagneticHeading(tNanos: Long, magneticHeadingDeg: Float, accuracy: Int) {
+    override fun onMagneticHeading(
+        tNanos: Long,
+        magneticHeadingDeg: Float,
+        accuracy: Int,
+        declinationDeg: Float,
+    ) {
         lastMagHeadingDeg = magneticHeadingDeg
         lastMagAccuracy = accuracy
+        lastDeclinationDeg = declinationDeg
+
+        // Fusing happens here rather than on the tick: the compass arrives at its own rate, and a
+        // reading is only worth as much as the vendor's confidence in it. LOW and UNRELIABLE are
+        // skipped outright -- an uncalibrated compass is not a weak measurement, it is a wrong one.
+        //
+        // WALK is excluded because the whole model assumes the phone is fixed relative to the
+        // vehicle. A phone in a walking hand has no mount offset to solve, and letting the filter
+        // chase one would corrupt heading with arm swing.
+        if (!config.useMagHeading || vehicleMode == VehicleMode.WALK) return
+        val sigmaDeg = when (accuracy) {
+            MAG_ACCURACY_HIGH -> config.ekfMagHeadingNoiseHighDeg
+            MAG_ACCURACY_MEDIUM -> config.ekfMagHeadingNoiseMediumDeg
+            else -> return
+        }
+        fusionFilter.updateWithMagneticHeading(
+            magneticHeadingDeg.toDouble(), declinationDeg.toDouble(), sigmaDeg,
+        )
     }
 
     // Online delta-bias calibration (doc §14: "online recalibration against GNSS").
@@ -769,6 +793,7 @@ class RealEngine(
                 dvBiasMps2 = if (deltaEstimator != null) dvBias.biasMps2 else Float.NaN,
                 magHeadingDeg = lastMagHeadingDeg,
                 magAccuracy = lastMagAccuracy,
+                mountOffsetDeg = fusionFilter.mountOffsetDeg().toFloat(),
             )
             diagnostics?.onTick(tick)
             telemetryWriter?.write(tick)
@@ -787,5 +812,12 @@ class RealEngine(
             uncertaintyM = fusionFilter.uncertaintyM(),
             engineTickMs = (System.nanoTime() - tickStartNanos) / 1_000_000f,
         )
+    }
+
+    private companion object {
+        // android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM / _HIGH. Duplicated as
+        // plain Ints because :engine is pure Kotlin and must not depend on the Android SDK.
+        const val MAG_ACCURACY_MEDIUM = 2
+        const val MAG_ACCURACY_HIGH = 3
     }
 }

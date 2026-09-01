@@ -29,16 +29,23 @@ interface PositioningEngine {
      * Tilt-compensated compass azimuth, degrees clockwise from MAGNETIC north, plus the vendor's
      * own accuracy rating for it (SensorManager.SENSOR_STATUS_*).
      *
-     * Recorded, never fused. The compass reads the phone's azimuth while the filter tracks the
-     * vehicle's heading, and the constant yaw offset between the two depends on how the phone is
-     * mounted — so this cannot enter the filter until that offset is shown to be stable, which is
-     * what logging it is for. Declination is deliberately not applied: it is a slowly varying
-     * constant that would be absorbed into the same mount offset, and leaving it out keeps this
-     * free of any dependency on position.
+     * The compass reads the phone's azimuth while the filter tracks the vehicle's heading; the two
+     * differ by however the phone was seated in its cradle. [declinationDeg] converts magnetic to
+     * true north — the frame the filter's heading and GNSS bearing already use. It is passed in
+     * rather than assumed because it depends on where on Earth the vehicle is, and folding it into
+     * the mount offset would leave that offset wrong as soon as the vehicle travelled.
+     *
+     * Always recorded; whether it is also fused is the filter's decision, gated on
+     * EngineConfig.useMagHeading and on the accuracy rating.
      *
      * Default no-op: engines that do not record telemetry have nothing to do with it.
      */
-    fun onMagneticHeading(tNanos: Long, magneticHeadingDeg: Float, accuracy: Int) {}
+    fun onMagneticHeading(
+        tNanos: Long,
+        magneticHeadingDeg: Float,
+        accuracy: Int,
+        declinationDeg: Float = 0f,
+    ) {}
 
     val state: StateFlow<PositionState>
 

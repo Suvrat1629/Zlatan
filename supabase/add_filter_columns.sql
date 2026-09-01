@@ -33,4 +33,9 @@ alter table public.telemetry
     -- (mag_heading_deg - heading) holds steady per mount while mag_accuracy = 3, which is what
     -- would justify building the mount-offset calibrator that fusing the compass needs.
     add column if not exists mag_heading_deg  double precision,
-    add column if not exists mag_accuracy     integer;
+    add column if not exists mag_accuracy     integer,
+
+    -- The filter's estimate of how the phone sits in its cradle, degrees. Meaningful only once
+    -- use_mag_heading is on and the compass has been fed; before that it is still the prior. A
+    -- value that converges and then walks is the phone moving in the mount.
+    add column if not exists mount_offset_deg double precision;

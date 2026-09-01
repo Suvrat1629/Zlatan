@@ -95,6 +95,11 @@ data class TelemetryTick(
     /** The vendor's own confidence in [magHeadingDeg]: SensorManager.SENSOR_STATUS_* (0 unreliable
      *  to 3 high), or -1 before any reading. Only HIGH readings mean anything for the residual. */
     val magAccuracy: Int,
+    /** The filter's estimate of the phone-to-vehicle mount offset, degrees; NaN for filters that
+     *  do not solve one. Only meaningful once the compass has actually been fed — until then it is
+     *  still the (deliberately enormous) prior, so read it beside [magAccuracy]. A converged offset
+     *  that then walks is the phone moving in its cradle. */
+    val mountOffsetDeg: Float,
 )
 
 /** A moment the tester flagged, or an automatic event worth finding again in the log. */
