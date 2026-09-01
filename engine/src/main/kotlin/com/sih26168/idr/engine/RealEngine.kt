@@ -152,15 +152,12 @@ class RealEngine(
     fun setGnssMuted(muted: Boolean) { gnssMuted = muted }
 
     // Online delta-bias calibration (doc §14: "online recalibration against GNSS").
-    // Field logs showed the delta model carries a device/domain-specific positive bias
-    // (+0.5..1.8 m/s^2 on an S24 vs ~0 on the training set), inflating speed between
-    // fixes. While GNSS is trusted the true speed change per second is known, so we
-    // EMA-track (predicted dv - true dv) and subtract it everywhere.
-    private var dvBiasMps2 = 0f
-    private var dvSumSinceFix = 0f
-    private var dvCountSinceFix = 0
-    private var prevFixSpeedMps = Float.NaN
-    private var prevFixNanos = 0L
+    // See DvBiasEstimator for what it corrects and why the state lives outside this class.
+    private val dvBias = DvBiasEstimator(
+        alpha = config.dvBiasEmaAlpha,
+        minFixDtSeconds = config.dvBiasFixDtMinSeconds,
+        maxFixDtSeconds = config.dvBiasFixDtMaxSeconds,
+    )
 
     // Map-match fusion only runs when the matcher actually emits a fusable covariance (the
     // HMM). Feeding a greedy snapper's nearest-segment pick into the EKF as a tight
@@ -363,18 +360,7 @@ class RealEngine(
 
             // Online dv-bias update: compare the delta model's average prediction over the
             // inter-fix interval with the GNSS-observed speed change per second.
-            if (!prevFixSpeedMps.isNaN() && prevFixNanos != 0L && dvCountSinceFix > 0) {
-                val dtFix = (fix.tNanos - prevFixNanos) / 1e9f
-                if (dtFix in 0.2f..5f) {
-                    val trueDv = (fix.speedMps - prevFixSpeedMps) / dtFix
-                    val predDv = dvSumSinceFix / dvCountSinceFix
-                    dvBiasMps2 = 0.95f * dvBiasMps2 + 0.05f * (predDv - trueDv)
-                }
-            }
-            prevFixSpeedMps = fix.speedMps
-            prevFixNanos = fix.tNanos
-            dvSumSinceFix = 0f
-            dvCountSinceFix = 0
+            dvBias.onTrustedFix(fix.speedMps, fix.tNanos)
         }
 
         if (rawWindow == null) {
@@ -516,11 +502,8 @@ class RealEngine(
             // its output must not reach the GNSS-referenced bias estimator either -- that average
             // is compared against a real observed speed change, and feeding hand motion into it
             // would poison a correction that persists long after the shake ends.
-            if (!handling) {
-                dvSumSinceFix += dvRaw
-                dvCountSinceFix++
-            }
-            val dv = dvRaw - dvBiasMps2               // online bias correction (learned vs GNSS)
+            if (!handling) dvBias.observePrediction(dvRaw)
+            val dv = dvRaw - dvBias.biasMps2          // online bias correction (learned vs GNSS)
             lastDvMps2 = dv
             val tSec = ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
             val lam = (tSec / (tSec + config.blendTauSeconds)).toFloat().coerceAtMost(activeBlendMaxLambda)
@@ -538,7 +521,7 @@ class RealEngine(
             if (blendLogCounter++ % 20 == 0) {
                 System.out.println(
                     "IDR-BLEND vAbs=${"%.1f".format(vAbs * 3.6f)}km/h dvRaw=${"%.2f".format(dvRaw)} " +
-                        "bias=${"%.2f".format(dvBiasMps2)} lam=${"%.3f".format(lam)} " +
+                        "bias=${"%.2f".format(dvBias.biasMps2)} lam=${"%.3f".format(lam)} " +
                         "t=${"%.0f".format(tSec)}s zupt=$stationary blend=${"%.1f".format(blendSpeedMps * 3.6f)}km/h"
                 )
             }
