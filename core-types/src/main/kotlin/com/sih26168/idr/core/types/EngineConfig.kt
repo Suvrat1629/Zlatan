@@ -22,6 +22,17 @@ data class EngineConfig(
     val zuptAccelThresholdMps2: Float = 0.8f,
     val zuptGyroThresholdRps: Float = 0.15f,
 
+    // Online delta-model bias calibration (DvBiasEstimator). The delta model carries a
+    // device-specific offset (+0.5..1.8 m/s^2 measured on an S24 against ~0 on the training
+    // set), tracked against trusted GNSS and subtracted. Alpha is low because the offset is a
+    // slow device property and one inter-fix interval is a noisy look at it; at 0.05 the
+    // estimate is most of the way there after roughly 20 fixes. The dt bounds discard intervals
+    // too short to carry signal over GNSS speed noise, and ones long enough that the average
+    // prediction spans a different driving regime.
+    val dvBiasEmaAlpha: Float = 0.05f,
+    val dvBiasFixDtMinSeconds: Float = 0.2f,
+    val dvBiasFixDtMaxSeconds: Float = 5.0f,
+
     // WALK mode damping: published speed = min(speed * scale, cap). Car-trained models
     // misread gait as vehicle speed; this keeps walking display in a sane band.
     val walkingSpeedScale: Float = 0.3f,
