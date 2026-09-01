@@ -20,7 +20,10 @@ class MagneticHeadingTest {
     private val speedMps = 15f
     private val dt = 0.1
     private val trueHeadingDeg = 0.0          // driving due north
-    private val declinationDeg = 0.0
+    // Non-zero on purpose: this is the sign convention most likely to be wrong. GeomagneticField
+    // reports declination positive east, so true = magnetic + declination, and Bengaluru is about
+    // -1. A flipped sign here would show up as the offset landing two degrees out.
+    private val declinationDeg = -1.0
     private val config = EngineConfig.DEFAULT
     private val sigmaHigh = config.ekfMagHeadingNoiseHighDeg
 
@@ -62,8 +65,9 @@ class MagneticHeadingTest {
 
         // offset = vehicle heading - compass reading. Phone rotated 90 degrees from the nose, so
         // the compass reads 90 degrees less than the vehicle heads, and the offset is +90.
+        // Tight bound, and that is the point: a declination sign error would land this near +88.
         val offsetError = wrapDeg(ekf.mountOffsetDeg() - 90.0)
-        assertTrue(abs(offsetError) < 5.0, "mount offset should converge to +90; got ${ekf.mountOffsetDeg()}")
+        assertTrue(abs(offsetError) < 1.0, "mount offset should converge to +90; got ${ekf.mountOffsetDeg()}")
 
         // And it must have converged by moving the offset, not by dragging heading off true.
         val headingError = wrapDeg(ekf.headingDeg() - trueHeadingDeg)
