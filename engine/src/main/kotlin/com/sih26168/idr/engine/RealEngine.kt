@@ -486,6 +486,9 @@ class RealEngine(
                 mapMatchUncertaintyM = if (matchResult.onRoad) matchResult.uncertaintyM else Float.NaN,
                 inferenceMs = lastInferenceMs,
                 tickMs = (System.nanoTime() - t0) / 1_000_000f,
+                // NaN, not 0, when there is no delta model: 0 is a legitimate converged estimate
+                // and must not be confused with "this loop never ran".
+                dvBiasMps2 = if (deltaEstimator != null) dvBias.biasMps2 else Float.NaN,
             )
             diagnostics?.onTick(tick)
             telemetryWriter?.write(tick)
