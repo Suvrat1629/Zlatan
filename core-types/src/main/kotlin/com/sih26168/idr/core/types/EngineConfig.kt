@@ -277,6 +277,11 @@ data class EngineConfig(
     // Wider than the GNSS bearing noise on purpose: a road's bearing is its polyline's bearing, so
     // a gentle curve or a wide junction sits 10-15 degrees off the vehicle's true heading. The
     // road is the fallback reference, not the better one.
+    // ponytail: applied every tick with the same segment bearing, so the filter counts one
+    // observation as outputRateHz of them and the effective weight is ~sqrt(outputRateHz)
+    // tighter than this sigma reads. Harmless on a straight, and it is what the pre-EKF nudge
+    // did too; on a gentle curve inside the turn gate it lags heading toward the segment by a
+    // few degrees. Rate-limit to segment changes if it fights GNSS bearing on a real drive.
     val ekfRoadBearingNoiseDeg: Float = 10f,
 
     // --- gyro bias state (heading work plan F3) ---
