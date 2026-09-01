@@ -80,4 +80,26 @@ class ModeArbiterTest {
         arbiter.onGnssFix(tNanos = 0, satsInFix = ModeArbiter.SATS_UNKNOWN, irnssSatsInFix = 0)
         assertEquals(Mode.DEAD_RECKONING, arbiter.currentMode(4_000_000_000L))
     }
+
+    /**
+     * NavIC is a named problem-statement requirement, so the claim has to be defensible (TODO K9).
+     * A single IRNSS satellite contributes almost nothing to a position solution; reporting that
+     * fix as NAVIC would not survive scrutiny from anyone who knows how a fix is computed.
+     * Measured 2026-09-01: NavIC contributed to 6% of fixes, supplying 2-3 satellites of 25-30.
+     */
+    @Test
+    fun oneIrnssSatelliteIsNotANavicFix() {
+        val arbiter = ModeArbiter(noFixTimeoutMs = 3000)
+        arbiter.markWindowReady()
+        arbiter.onGnssFix(tNanos = 0, satsInFix = 28, irnssSatsInFix = 1)
+        assertEquals(Mode.GNSS, arbiter.currentMode(0))
+    }
+
+    @Test
+    fun twoIrnssSatellitesCountAsNavicAided() {
+        val arbiter = ModeArbiter(noFixTimeoutMs = 3000)
+        arbiter.markWindowReady()
+        arbiter.onGnssFix(tNanos = 0, satsInFix = 28, irnssSatsInFix = 2)
+        assertEquals(Mode.NAVIC, arbiter.currentMode(0))
+    }
 }

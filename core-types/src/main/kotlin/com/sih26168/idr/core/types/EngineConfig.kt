@@ -109,6 +109,22 @@ data class EngineConfig(
      * retrain of both models. That is a real design task, not a config change.
      */
     val useDeltaModel: Boolean = false,
+
+    /**
+     * Whether the speed model's own per-window uncertainty drives the filter's process noise.
+     *
+     * This is the project's answer to the problem statement's call for AI-based fusion.
+     * [ErrorStateEkf] is hand-tuned throughout, and a full learned filter is not warranted at this
+     * stage — but its speed process noise is exactly where a heteroscedastic variance head belongs.
+     * A model that knows it is guessing should widen the filter for that tick rather than being
+     * trusted at a fixed constant, which is genuine learned noise adaptation in the fusion step
+     * rather than a classical filter with a neural network bolted upstream.
+     *
+     * ON by default and harmless before the head exists: models without one report no uncertainty
+     * and the filter falls back to `ekfSpeedNoiseMps` exactly as before. It becomes live the moment
+     * a two-output model is dropped into assets.
+     */
+    val useLearnedSpeedVariance: Boolean = true,
     /**
      * How long the engine may coast on a held speed and frozen heading before it resumes normal
      * processing regardless, seconds.
@@ -290,6 +306,22 @@ data class EngineConfig(
     // default -- the earlier "snap the reckoner to the match" attempt erased cross-track
     // motion and was reverted (see RealEngine.tickOnce), so this stays gated until validated
     // on a real drive, the same discipline useErrorStateEkf/useHmmMapMatcher started with.
+    /**
+     * Maximum disagreement between our heading and the matched road's bearing before the match is
+     * rejected as a wrong snap, degrees. Folded onto [0,90], so driving a two-way road in either
+     * direction agrees.
+     *
+     * The uncertainty gate asks whether the matcher is CONFIDENT; this asks whether it is plausibly
+     * CORRECT. On a dense grid those differ sharply — measured 2026-09-01 the matcher was on-road on
+     * 88-100% of ticks with 8.8 m median uncertainty while visibly following the wrong streets.
+     * Fusing a confident wrong snap is worse than not fusing: it drags the filter onto a parallel
+     * road and reports high confidence in the result.
+     *
+     * 35 degrees admits genuine turns and curved roads while rejecting a snap onto a cross-street,
+     * which is the failure this exists to catch.
+     */
+    val mapMatchMaxHeadingDisagreeDeg: Double = 35.0,
+
     val useMapMatchFusion: Boolean = false,
     // Only fuse a match at least this confident: uncertaintyM below this. Both matchers emit
     // uncertaintyM as a positional 1-std on the same scale -- RoadMatcher = perpendicular snap

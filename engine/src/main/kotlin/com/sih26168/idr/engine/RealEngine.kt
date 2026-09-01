@@ -115,6 +115,7 @@ class RealEngine(
     private val longTickCount = java.util.concurrent.atomic.AtomicLong(0)
     private var lastTickEndNanos = 0L
     @Volatile private var dtSecondsForTelemetry = 0.0
+    @Volatile private var lastSpeedSigmaMps = Float.NaN
 
     /** Floor on integrated tick time. A tick that fires early or twice on the same sample must not
      *  integrate zero (which would stall position) or a negative interval. */
@@ -157,6 +158,7 @@ class RealEngine(
     private var mapMatchGateOkCount = 0L
     private var mapMatchGateFailCount = 0L
     private var mapMatchGateLogCounter = 0
+    private var mapMatchHeadingRejects = 0L
 
     init {
         if (config.useMapMatchFusion && !mapMatcher.emitsFusableCovariance) {
@@ -407,7 +409,13 @@ class RealEngine(
         lastTickEndNanos = tEndNanos
         dtSecondsForTelemetry = elapsedSeconds
         val inferStart = System.nanoTime()
-        val vAbs = speedEstimator.estimate(normalized).coerceIn(config.speedMinMps, config.speedMaxMps)
+        // Ask for the model's own uncertainty as well as its answer. When the loaded model has a
+        // variance head this is what puts something learned into the fusion step -- the filter's
+        // process noise stops being a hand-tuned constant and becomes the model's per-window
+        // confidence. Null when the model has no head, and the filter falls back to the constant.
+        val estimate = speedEstimator.estimateWithVariance(normalized)
+        lastSpeedSigmaMps = estimate.sigmaMps ?: Float.NaN
+        val vAbs = estimate.speedMps.coerceIn(config.speedMinMps, config.speedMaxMps)
         lastInferenceMs = (System.nanoTime() - inferStart) / 1_000_000f
 
         // Drain the fully-integrated turn angle accumulated since the last tick and feed it
@@ -581,14 +589,41 @@ class RealEngine(
         // headingDeg here is the raw gyro-integrated control input -- it must stay raw, not
         // the filter's own corrected heading, or the correction would feed back into itself
         // instead of being driven by fresh gyro data.
-        fusionFilter.predict(deadReckoned, slewed, headingDeg, dtSeconds)
+        fusionFilter.predict(
+            deadReckoned, slewed, headingDeg, dtSeconds,
+            speedSigmaMps = estimate.sigmaMps?.takeIf { config.useLearnedSpeedVariance },
+        )
         val preMatchPos = fusionFilter.estimate()
         // ONE snap call per tick -- the HMM advances its hypothesis chain on each call past the
         // displacement gate, so calling it twice would double-step it.
         val matchResult = mapMatcher.snap(preMatchPos)
+        // Heading agreement between the matched road and where we believe we are pointing.
+        //
+        // The gate below asks whether the matcher is CONFIDENT. It cannot ask whether the matcher is
+        // CORRECT, and on a dense street grid those are very different questions: measured
+        // 2026-09-01 the matcher reported on-road on 88-100% of ticks with a median uncertainty of
+        // 8.8 m, while the map visibly showed the estimate following the wrong roads. A confident
+        // wrong snap is worse than no snap, because fusing it drags the filter onto a parallel
+        // street and the covariance says to trust it.
+        //
+        // A road we are genuinely travelling along should have a bearing close to our heading, or
+        // close to its reverse for a two-way road we are driving the other way down. A snap onto a
+        // cross-street fails both. This is the cheapest available check that tests correctness
+        // rather than confidence, and it is what makes turning fusion on defensible (TODO.md K10).
+        val matchedBearing = matchResult.roadBearingDeg
+        val headingAgrees = matchedBearing == null || run {
+            val d = kotlin.math.abs(((headingDeg - matchedBearing) % 360.0 + 540.0) % 360.0 - 180.0)
+            // Fold onto [0,90]: a one-way mismatch of 180 degrees is the same road, driven the
+            // other way, and the anisotropic update is symmetric about the road axis anyway.
+            val folded = if (d > 90.0) 180.0 - d else d
+            folded <= config.mapMatchMaxHeadingDisagreeDeg
+        }
+        if (!headingAgrees) mapMatchHeadingRejects++
+
         val gatePasses = matchResult.onRoad &&
             matchResult.roadBearingDeg != null &&
-            matchResult.uncertaintyM <= config.mapMatchMaxFuseUncertaintyM
+            matchResult.uncertaintyM <= config.mapMatchMaxFuseUncertaintyM &&
+            headingAgrees
         val fuseMapMatch = mapMatchFusionEnabled && gatePasses
         // Gate statistics run whenever the matcher COULD be fused (i.e. the HMM), even with
         // use_map_match_fusion off -- a display-only drive on the real 25k-way graph then
@@ -600,6 +635,7 @@ class RealEngine(
             if (mapMatchGateLogCounter++ % 20 == 0) {
                 val reason = when {
                     !matchResult.onRoad -> "off-road"
+                    !headingAgrees -> "wrong-road (heading disagrees)"
                     matchResult.roadBearingDeg == null -> "no-bearing"
                     matchResult.uncertaintyM > config.mapMatchMaxFuseUncertaintyM ->
                         "unc=${"%.1f".format(matchResult.uncertaintyM)}>${config.mapMatchMaxFuseUncertaintyM}"

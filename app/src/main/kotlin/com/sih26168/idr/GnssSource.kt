@@ -44,19 +44,49 @@ class GnssSource(
     private val rejectedForAccuracy = java.util.concurrent.atomic.AtomicLong(0)
     private val rejectedForSatellites = java.util.concurrent.atomic.AtomicLong(0)
     private val mutedDrops = java.util.concurrent.atomic.AtomicLong(0)
+    private val implausibleCounts = java.util.concurrent.atomic.AtomicLong(0)
+    private val fixesWithIrnss = java.util.concurrent.atomic.AtomicLong(0)
+    private val totalStatusUpdates = java.util.concurrent.atomic.AtomicLong(0)
+    @Volatile private var warnedImplausible = false
+    @Volatile private var satsVisible = 0
 
     private val gnssStatusCallback = object : GnssStatus.Callback() {
         override fun onSatelliteStatusChanged(status: GnssStatus) {
             var total = 0
             var irnss = 0
+            var visible = 0
             for (i in 0 until status.satelliteCount) {
+                visible++
                 if (!status.usedInFix(i)) continue
                 total++
-
                 if (status.getConstellationType(i) == GnssStatus.CONSTELLATION_IRNSS) irnss++
+            }
+            // Sanity bound on the used-in-fix count (TODO.md K9). Measured on a real ride the count
+            // sat between 16 and 37, which is normal for a modern multi-constellation receiver, but
+            // three fixes out of 83 reported 58-62 and an earlier session reported 78. No receiver
+            // solves a position from that many satellites; the vendor's usedInFix flag is
+            // over-reporting, most likely while constellations are being switched in and out.
+            //
+            // The count is not navigation-critical -- the mode arbiter only asks whether it is zero
+            // -- but it IS the number that evidences the NavIC requirement in a demo, so a
+            // physically impossible value must be visible rather than silently published.
+            if (total > MAX_PLAUSIBLE_SATS_IN_FIX) {
+                implausibleCounts.incrementAndGet()
+                if (!warnedImplausible) {
+                    warnedImplausible = true
+                    System.err.println(
+                        "[GnssSource] receiver reported $total satellites used in fix out of $visible " +
+                            "visible — implausible, capping at $MAX_PLAUSIBLE_SATS_IN_FIX. The count is " +
+                            "reported, not trusted; NavIC evidence should cite the IRNSS figure."
+                    )
+                }
+                total = MAX_PLAUSIBLE_SATS_IN_FIX
             }
             satsInFix = total
             irnssSatsInFix = irnss
+            satsVisible = visible
+            if (irnss > 0) fixesWithIrnss.incrementAndGet()
+            totalStatusUpdates.incrementAndGet()
         }
     }
 
@@ -141,11 +171,23 @@ class GnssSource(
      * no fix at all are indistinguishable from outside the app — which is most of what "it isn't
      * using live GPS" turns out to mean (TODO.md G5).
      */
-    data class FixCounts(val accepted: Long, val rejectedAccuracy: Long, val rejectedSatellites: Long, val mutedDrops: Long)
-
-    fun fixCounts() = FixCounts(
-        accepted.get(), rejectedForAccuracy.get(), rejectedForSatellites.get(), mutedDrops.get(),
+    data class FixCounts(
+        val accepted: Long, val rejectedAccuracy: Long, val rejectedSatellites: Long, val mutedDrops: Long,
+        /** Status updates whose used-in-fix count exceeded what a receiver can physically solve. */
+        val implausibleSatCounts: Long,
+        /** Share of status updates where NavIC actually contributed a satellite to the fix.
+         *  Measured 6% on 2026-09-01 — NavIC is a contributor, not the source of most fixes. */
+        val irnssContributionPercent: Double,
     )
+
+    fun fixCounts(): FixCounts {
+        val updates = totalStatusUpdates.get()
+        return FixCounts(
+            accepted.get(), rejectedForAccuracy.get(), rejectedForSatellites.get(), mutedDrops.get(),
+            implausibleCounts.get(),
+            if (updates > 0) 100.0 * fixesWithIrnss.get() / updates else 0.0,
+        )
+    }
 
     fun stop() {
         if (!started.compareAndSet(true, false)) return
@@ -161,5 +203,14 @@ class GnssSource(
 
     companion object {
         private const val MIN_SATS_FOR_TRUST = 4
+
+        /**
+         * Ceiling on satellites reported as used in a single fix.
+         *
+         * A multi-constellation receiver (GPS, GLONASS, Galileo, BeiDou, QZSS, NavIC) can genuinely
+         * use 30-40. It cannot use 78. 40 sits above every plausible real value measured and below
+         * every implausible one, so it separates the two without discarding good data.
+         */
+        private const val MAX_PLAUSIBLE_SATS_IN_FIX = 40
     }
 }

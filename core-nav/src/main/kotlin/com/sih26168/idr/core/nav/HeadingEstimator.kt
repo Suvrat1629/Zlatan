@@ -21,9 +21,11 @@ class GyroIntegrationHeadingEstimator(initialHeadingDeg: Double = 0.0) : Heading
         // a LEFT turn is a POSITIVE z rate), while compass bearing is clockwise-positive
         // (a left turn DECREASES heading). Integrating with '+' therefore mirrors every
         // turn — observed in the field as left showing as right in dead reckoning.
-        // NOTE: assumes the usual screen-up mount; a screen-down phone flips the sign
-        // again. Proper mount-agnostic handling = project gyro onto the gravity axis
-        // (alignment engine, W6) — this fixes the standard orientation until then.
+        // Mount-agnostic since block F1: RealEngine feeds this the rate about the LOCAL VERTICAL
+        // from YawRate.aboutVertical, not the raw device z axis, so any mounting orientation gives
+        // the same rotation. This comment previously said the opposite and a 2026-09-01 audit of
+        // the deliverables read it and concluded alignment had not been started -- a stale comment
+        // is worse than no comment. See YawRateTest and MountInvarianceTest for the sweep.
         headingDeg = (headingDeg - Math.toDegrees(gyroZRadPerSec.toDouble()) * dtSeconds).mod(360.0)
     }
 
