@@ -115,14 +115,9 @@ class GnssSource(
         val starved = starvedNanos > (starvedAfterSeconds * 1e9).toLong()
         val gateM = if (starved) starvedAccuracyCeilingM else accuracyGateM
         val accuracyM = if (location.hasAccuracy()) location.accuracy else null
-<<<<<<< HEAD
         if (accuracyM != null && accuracyM > gateM) {
-            System.err.println("[GnssSource] rejected fix with accuracy ${accuracyM}m (multipath/poor geometry) — over ${gateM}m threshold")
-=======
-        if (accuracyM != null && accuracyM > MAX_ACCEPTABLE_ACCURACY_M) {
             rejectedForAccuracy.incrementAndGet()
-            System.err.println("[GnssSource] rejected fix with accuracy ${accuracyM}m (multipath/poor geometry) — over ${MAX_ACCEPTABLE_ACCURACY_M}m threshold")
->>>>>>> 021b80d (Block G and H: shake/GNSS fixes, fleet telemetry analysis, and the measurement protocol)
+            System.err.println("[GnssSource] rejected fix with accuracy ${accuracyM}m (multipath/poor geometry) — over ${gateM}m threshold")
             return@LocationListener
         }
         // A KNOWN count below the trust floor is weak geometry. An UNKNOWN count is not evidence
@@ -132,14 +127,11 @@ class GnssSource(
             System.err.println("[GnssSource] rejected fix with only $satsInFix satellites — under $MIN_SATS_FOR_TRUST sats, geometry too weak to trust (this is exactly what causes standing-still jitter)")
             return@LocationListener
         }
-<<<<<<< HEAD
         if (starved && accuracyM != null && accuracyM > accuracyGateM) {
             System.err.println("[GnssSource] accepting degraded fix (accuracy ${accuracyM}m) after ${starvedNanos / 1_000_000_000}s without an accepted fix")
         }
         lastAcceptedElapsedNanos = nowElapsedRealtimeNanos
-=======
         accepted.incrementAndGet()
->>>>>>> 021b80d (Block G and H: shake/GNSS fixes, fleet telemetry analysis, and the measurement protocol)
 
         engine.onGnssFix(
             tNanos = nowElapsedRealtimeNanos,
