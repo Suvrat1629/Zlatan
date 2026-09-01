@@ -669,24 +669,40 @@ class RealEngine(
         val displayPos = if (fuseMapMatch) fused else matchResult.position
         deadReckoner.reset(fused)
 
-        // Road-heading correction: on a confident match, pull heading toward the road's
-        // bearing. The gyro's heading random-walk is the dominant cross-track error on long
-        // straights (Part C: 4% -> 34% with outage duration); the road geometry is the
-        // absolute reference the magnetometer failed to be. Gates: tight match only, moving
-        // (bearing meaningless when parked), and NOT turning (never fight a real turn).
-        val roadBearing = mapMatcher.matchedBearingDeg()
-        val matchDist = mapMatcher.matchedDistanceM()
-        if (roadBearing != null && matchDist != null &&
-            matchDist <= config.roadHeadingMaxDistM &&
+        // Road-heading correction: on a confident match, pull heading toward the road's bearing.
+        // The gyro's heading random-walk is the dominant cross-track error on long straights
+        // (Part C: 4% -> 34% with outage duration); the road geometry is the absolute reference
+        // the magnetometer failed to be. Gates: tight match only, moving (bearing is meaningless
+        // when parked), and NOT turning (never fight a real turn).
+        //
+        // Two routes, because the correction has to enter wherever heading actually lives. When
+        // the filter owns heading it must arrive as a weighted measurement on the filter's own
+        // theta: nudging the gyro estimator underneath the EKF would inject the whole correction
+        // as if it were real rotation -- unweighted, bypassing the covariance, the same trap
+        // seedFromGnssCourse is gated against above. (updateWithMapMatch also takes a road
+        // bearing, but only to rotate the position measurement into road axes; its H row has
+        // hTheta = 0, so it corrects heading not at all. It is also off by default.)
+        //
+        // Same gates either way: confident match, moving, and not mid-turn -- never fight a
+        // real turn with the road's average bearing.
+        val roadBearing = matchResult.roadBearingDeg
+        if (roadBearing != null &&
+            matchResult.onRoad &&
+            matchResult.uncertaintyM <= config.roadHeadingMaxDistM &&
             slewed > 3f &&
             kotlin.math.abs(turnRad / dtSeconds) < config.roadHeadingMaxTurnRps
         ) {
-            // Way direction is arbitrary: resolve the 180-degree ambiguity toward whichever
-            // end is closer to the current heading.
-            val h = headingEstimator.headingDeg()
-            val d1 = kotlin.math.abs(((roadBearing - h + 540.0) % 360.0) - 180.0)
-            val target = if (d1 <= 90.0) roadBearing else (roadBearing + 180.0).mod(360.0)
-            headingEstimator.nudgeToward(target, config.roadHeadingGain)
+            if (fusionFilter.headingDeg() == null) {
+                // Way direction is arbitrary: resolve the 180-degree ambiguity toward whichever
+                // end is closer to the current heading. The filter path does the same thing by
+                // wrapping its innovation to a quarter turn.
+                val h = headingEstimator.headingDeg()
+                val d1 = kotlin.math.abs(((roadBearing - h + 540.0) % 360.0) - 180.0)
+                val target = if (d1 <= 90.0) roadBearing else (roadBearing + 180.0).mod(360.0)
+                headingEstimator.nudgeToward(target, config.roadHeadingGain)
+            } else if (config.useRoadBearingHeading) {
+                fusionFilter.updateWithRoadBearing(roadBearing, config.ekfRoadBearingNoiseDeg)
+            }
         }
 
         // The filter may track its own, better-corrected heading (e.g. ErrorStateEkf, via

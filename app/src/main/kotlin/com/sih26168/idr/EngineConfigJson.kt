@@ -17,6 +17,8 @@ object EngineConfigJson {
             ekfMinGnssAccuracyM = o.optDouble("ekf_min_gnss_accuracy_m", d.ekfMinGnssAccuracyM.toDouble()).toFloat(),
             ekfMinBearingTrustSpeedMps = o.optDouble("ekf_min_bearing_trust_speed_mps", d.ekfMinBearingTrustSpeedMps.toDouble()).toFloat(),
             ekfGnssBearingNoiseDeg = o.optDouble("ekf_gnss_bearing_noise_deg", d.ekfGnssBearingNoiseDeg.toDouble()).toFloat(),
+            useRoadBearingHeading = o.optBoolean("use_road_bearing_heading", d.useRoadBearingHeading),
+            ekfRoadBearingNoiseDeg = o.optDouble("ekf_road_bearing_noise_deg", d.ekfRoadBearingNoiseDeg.toDouble()).toFloat(),
             ekfInitialGyroBiasDps = o.optDouble("ekf_initial_gyro_bias_dps", d.ekfInitialGyroBiasDps.toDouble()).toFloat(),
             ekfGyroBiasRandomWalkDpsPerSqrtSec = o.optDouble("ekf_gyro_bias_random_walk_dps_per_sqrt_s", d.ekfGyroBiasRandomWalkDpsPerSqrtSec.toDouble()).toFloat(),
             ekfZuptGyroNoiseDps = o.optDouble("ekf_zupt_gyro_noise_dps", d.ekfZuptGyroNoiseDps.toDouble()).toFloat(),

@@ -44,6 +44,13 @@ interface FusionFilter {
      */
     fun updateStationaryGyro(measuredYawRateRadS: Float) {}
 
+    /**
+     * The matched road's bearing as a heading measurement, with a 1-std in degrees. Only meaningful
+     * for filters that track heading; default no-op for those that do not. The caller owns the
+     * gating (confident match, moving, not mid-turn) — the filter owns the weighting.
+     */
+    fun updateWithRoadBearing(roadBearingDeg: Double, sigmaDeg: Float) {}
+
     /** Normalised innovation squared of the most recent GNSS position update, or NaN if none.
      *  Chi-square with 2 degrees of freedom: a healthy filter sits mostly below ~6. */
     fun lastGnssNis(): Double = Double.NaN
