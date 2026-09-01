@@ -18,6 +18,7 @@ import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.Mode
 import com.sih26168.idr.core.types.PositioningEngine
 import com.sih26168.idr.core.replay.TraceWriter
+import com.sih26168.idr.core.types.TelemetryTick
 import com.sih26168.idr.core.types.VehicleMode
 import com.sih26168.idr.engine.RealEngine
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +51,10 @@ class EngineService : Service() {
 
     private val uploader = TelemetryUploader()
 
+    private lateinit var dvBiasStore: DvBiasStore
+    @Volatile private var lastDvBiasMps2 = Float.NaN
+    private var dvBiasTickCounter = 0
+
     /** Drives the once-a-second telemetry logcat line; cancelled in onDestroy. */
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -74,9 +79,11 @@ class EngineService : Service() {
         // uploader's own clock — so a local file and its cloud copy could not be matched up.
         telemetry.onSessionIdChanged = uploader::setSessionId
         uploader.setSessionId(telemetry.id)
+        dvBiasStore = DvBiasStore(this, EngineFactory.deltaModelVersion(this))
         rawEngine = EngineFactory.create(
             context = this,
             startAt = lastKnown ?: LatLon(12.9716, 77.5946),
+            initialDvBiasMps2 = dvBiasStore.load(),
         )
         recordingEngine = TripRecordingEngine(rawEngine)
 
@@ -92,7 +99,7 @@ class EngineService : Service() {
         // pressed Record. The upload is a sampled convenience copy for the dashboard; the local
         // file is the lossless record, and it is the one that must never be optional.
         telemetry.startFileCapture(currentVehicle, currentMount)
-        realEngine?.setTelemetry(telemetry.diagnostics, telemetry.telemetryWriter, uploader::onTick)
+        realEngine?.setTelemetry(telemetry.diagnostics, telemetry.telemetryWriter, ::onEngineTick)
 
         createNotificationChannel()
         try {
@@ -153,9 +160,25 @@ class EngineService : Service() {
         // session still leaves behind the numbers it measured.
         realEngine?.setTelemetry(null, null, null)
         telemetry.stopFileCapture()
+        saveDvBias()
         uploader.close()
         recordingEngine.stop()
         super.onDestroy()
+    }
+
+    /**
+     * Tick sink for everything that is not the CSV. Also checkpoints the learned dv-bias: saving
+     * only in onDestroy would lose it whenever the system kills the service outright, which is
+     * the common way a long drive ends.
+     */
+    private fun onEngineTick(t: TelemetryTick) {
+        uploader.onTick(t)
+        if (++dvBiasTickCounter % DV_BIAS_SAVE_EVERY_TICKS == 0) saveDvBias(t.dvBiasMps2)
+        lastDvBiasMps2 = t.dvBiasMps2
+    }
+
+    private fun saveDvBias(value: Float = lastDvBiasMps2) {
+        if (value.isFinite()) dvBiasStore.save(value)
     }
 
     fun setVehicleMode(mode: VehicleMode) {
@@ -256,5 +279,8 @@ class EngineService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "idr_navigation"
         private const val TAG_TEL = "IDR-TEL"
+        /** Checkpoint the learned dv-bias every 30 s at the 10 Hz tick rate. Often enough that a
+         *  killed service loses almost nothing, rare enough to stay off the tick thread's back. */
+        private const val DV_BIAS_SAVE_EVERY_TICKS = 300
     }
 }
