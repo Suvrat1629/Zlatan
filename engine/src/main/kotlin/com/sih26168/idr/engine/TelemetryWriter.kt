@@ -42,7 +42,12 @@ import java.io.File
  * whether its residual against the filter's heading is steady enough to be worth fusing.
  *
  * Version 10 adds `mount_offset_deg`, the filter's estimate of how the phone sits in its cradle.
- * Meaningful only once use_mag_heading is on; before that it is still the prior.
+ * NaN unless use_mag_heading is on.
+ *
+ * Version 11 renames `dv_bias_mps2` to `dv_bias`, matching the Supabase column so the two records
+ * of the same number can be joined without a lookup table. The unit suffix is dropped rather than
+ * added on the cloud side because that table is already migrated; `gyro_bias_dps` keeps its suffix
+ * in both places, so the convention is inconsistent either way and the cheaper half wins.
  */
 class TelemetryWriter(
     private val writer: BufferedWriter,
@@ -56,7 +61,7 @@ class TelemetryWriter(
     private var rows = 0
 
     init {
-        writer.write("#schema=10")
+        writer.write("#schema=11")
         writer.newLine()
         writer.write(HEADER)
         writer.newLine()
@@ -96,7 +101,7 @@ class TelemetryWriter(
                 "yaw_rate_rad_s,heading_deg,gnss_bearing_deg,a_horiz_mps2," +
                 "stationary,tick_interval_ms,tilt_rate_rps,handling,vehicle_mode,gnss_muted,mode,sats,irnss_sats,lat,lon,gnss_lat,gnss_lon,uncertainty_m," +
                 "gyro_bias_dps,heading_unc_deg,gnss_nis,yaw_clamp_count," +
-                "map_on_road,map_unc_m,inference_ms,tick_ms,dv_bias_mps2," +
+                "map_on_road,map_unc_m,inference_ms,tick_ms,dv_bias," +
                 "mag_heading_deg,mag_accuracy,mount_offset_deg"
     }
 }
