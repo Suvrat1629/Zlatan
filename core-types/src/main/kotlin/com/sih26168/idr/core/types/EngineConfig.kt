@@ -313,10 +313,15 @@ data class EngineConfig(
     // residual looks steady per mount at mag_accuracy = 3, which is what the compass columns were
     // added to answer.
     val useMagHeading: Boolean = false,
-    /** Prior 1-std on the mount offset, degrees. Enormous on purpose: the phone's orientation in
-     *  the cradle is genuinely unknown, and this wide prior is what routes the first compass
-     *  innovation into the offset rather than into heading. */
-    val ekfInitialMountOffsetDeg: Float = 180f,
+    /** Prior 1-std on the mount offset, degrees. Wide on purpose: the phone's orientation in the
+     *  cradle is genuinely unknown, and a prior far wider than the heading's is what routes the
+     *  first compass innovation into the offset rather than into heading.
+     *
+     *  90, not 180. The filter linearises, and on a circular quantity a 180-degree 1-std is
+     *  effectively uniform -- precisely where a linearised update is least trustworthy. 90 still
+     *  dwarfs the 30-degree heading prior by the factor that makes the routing work, and it keeps
+     *  the innovation inside the range where the small-angle behaviour of the update holds. */
+    val ekfInitialMountOffsetDeg: Float = 90f,
     /** Mount-offset random walk, deg per sqrt(second). Small but never zero: a converged offset
      *  with no process noise could never recover from the phone being knocked or re-seated
      *  mid-drive, which is the only thing that actually changes it. Sized by measurement, not
