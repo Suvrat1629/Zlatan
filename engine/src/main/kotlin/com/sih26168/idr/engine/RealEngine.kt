@@ -761,6 +761,14 @@ class RealEngine(
             kotlin.math.abs(turnRad / dtSeconds) < config.roadHeadingMaxTurnRps
         ) {
             if (fusionFilter.headingDeg() == null) {
+                // UNEXERCISED PATH. It needs a filter that does not own heading -- i.e.
+                // use_error_state_ekf false -- and until this branch it also needed a bearing
+                // from MapMatcher.matchedBearingDeg(), which no matcher overrides, so it was
+                // always null. Reading matchResult instead makes this branch reachable for the
+                // first time: turning the EKF off would run roadHeadingGain against a real drive
+                // having never done so before. Not a reason to keep it dead, but the gain is
+                // untuned by measurement and should be treated that way.
+                //
                 // Way direction is arbitrary: resolve the 180-degree ambiguity toward whichever
                 // end is closer to the current heading. The filter path does the same thing by
                 // wrapping its innovation to a quarter turn.

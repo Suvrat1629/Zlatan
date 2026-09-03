@@ -30,6 +30,7 @@
   "dv_bias_fix_dt_max_s": 5.0,
   "walking_speed_scale": 0.3,
   "walking_speed_max_mps": 2.5,
+  "_comment_road_heading_gain": "Gain on the pre-EKF nudge that pulls the gyro heading toward the matched road. UNEXERCISED: it is gated on the fusion filter not owning heading, so it is dead whenever use_error_state_ekf is true (it is), AND until this branch its bearing came from MapMatcher.matchedBearingDeg(), which no matcher overrides and which therefore always returned null. Reading the snap result instead makes the branch reachable, so setting use_error_state_ekf false would fire this path for the FIRST time in production -- 0.08 has never been exercised against a real drive. Treat it as untested if the EKF is ever switched off.",
   "road_heading_gain": 0.08,
   "road_heading_max_uncertainty_m": 15.0,
   "road_heading_max_turn_rps": 0.15,
