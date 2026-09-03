@@ -147,8 +147,19 @@ better. See section 16, decision 1.
     dropped after real-device testing showed it was correct but impractical for a person to
     actually finish by hand. It now just surfaces the vendor's own continuous calibration via
     `TYPE_MAGNETIC_FIELD` + `onAccuracyChanged`, the same signal every nav app already relies on.
-    Nothing is persisted for fusion to consume; a future EKF-based fusion step (still
-    `PassthroughFusionFilter` today) would read the magnetic field + its accuracy directly.
+    Nothing is persisted for fusion to consume. The fusion filter is now `ErrorStateEkf`
+    (`use_error_state_ekf: true`), whose heading measurements are GNSS bearing above
+    `ekf_min_bearing_trust_speed_mps`, the zero-velocity gyro-bias observation, the matched road's
+    bearing (`use_road_bearing_heading`, on), and — behind `use_mag_heading`, **off** — the
+    compass. Wiring the compass in was never a call site: `getOrientation` yields the *phone's*
+    azimuth while the filter tracks the *vehicle's* heading. Rather than estimate that mount
+    offset separately, the EKF carries it as a fifth state with a deliberately wide prior, so an
+    early reading corrects the offset while a post-blackout reading corrects heading and the
+    covariance decides which; declination is passed in per location, since the filter's frame is
+    true north. It stays off by default because `docs/model-app-integration-contract.md` (A3.4)
+    excludes the magnetometer from the model for vehicle distortion, and that call is only
+    overturned by a drive showing `mag_heading_deg - heading` steady per mount at
+    `mag_accuracy = 3` — which is what the compass telemetry columns exist to answer.
 - Degrades gracefully *and says so* — visible uncertainty beats a confident wrong dot.
 - Location never leaves the device by default.
 

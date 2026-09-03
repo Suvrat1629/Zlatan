@@ -44,6 +44,26 @@ interface FusionFilter {
      */
     fun updateStationaryGyro(measuredYawRateRadS: Float) {}
 
+    /**
+     * The matched road's bearing as a heading measurement, with a 1-std in degrees. Only meaningful
+     * for filters that track heading; default no-op for those that do not. The caller owns the
+     * gating (confident match, moving, not mid-turn) — the filter owns the weighting.
+     */
+    fun updateWithRoadBearing(roadBearingDeg: Double, sigmaDeg: Float) {}
+
+    /**
+     * Compass azimuth (degrees clockwise from MAGNETIC north) as a heading measurement, with
+     * [declinationDeg] converting it to true north and [sigmaDeg] its 1-std. Only meaningful for
+     * filters that also solve the phone-to-vehicle mount offset; default no-op otherwise, because
+     * a filter that applied this without the offset would be treating the phone's orientation as
+     * the vehicle's.
+     */
+    fun updateWithMagneticHeading(magHeadingDeg: Double, declinationDeg: Double, sigmaDeg: Float) {}
+
+    /** Estimated phone-to-vehicle mount offset in degrees, or NaN for filters that do not solve
+     *  one. Converges only while the compass is being fed; read it with mag_accuracy alongside. */
+    fun mountOffsetDeg(): Double = Double.NaN
+
     /** Normalised innovation squared of the most recent GNSS position update, or NaN if none.
      *  Chi-square with 2 degrees of freedom: a healthy filter sits mostly below ~6. */
     fun lastGnssNis(): Double = Double.NaN

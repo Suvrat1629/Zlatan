@@ -97,12 +97,17 @@ class TelemetryUploader : Closeable {
             putFinite("gnss_lon", t.gnssLon)
             putFinite("uncertainty_m", t.uncertaintyM)
             // Diagnostics added after the uploader was written, and silently absent from every row
-            // collected before 2026-08-31 (TODO.md H2). These are not optional extras: the NIS gate,
-            // the map-match fusion flag and the gyro bias state are all deliberately left disabled
-            // until a real drive supplies their distributions, and these columns ARE those
-            // distributions. Without them the one drive that is supposed to settle those questions
-            // uploads no evidence for any of them.
+            // collected before 2026-08-31 (TODO.md H2). These are not optional extras: the gates
+            // that are still parked -- use_gnss_nis_gate and use_handling_gate -- stay off until a
+            // real drive supplies their distributions, and these columns ARE those distributions.
+            // The two bias states are the other half: they run unconditionally, and whether each
+            // converges to a stable per-device value is the only check that they are tracking a
+            // bias rather than absorbing noise. Without these columns the one drive that is
+            // supposed to settle those questions uploads no evidence for any of them.
             putFinite("gyro_bias_dps", t.gyroBiasDps)
+            // The delta model's learned device offset, same reasoning: it converges or it does not,
+            // and a stdout line cannot say which after the fact.
+            putFinite("dv_bias", t.dvBiasMps2)
             putFinite("heading_unc_deg", t.headingUncertaintyDeg)
             putFinite("gnss_nis", t.gnssNis)
             put("yaw_clamp_count", t.yawClampCount)
@@ -116,6 +121,9 @@ class TelemetryUploader : Closeable {
             put("handling", t.handling)
             put("vehicle_mode", t.vehicleMode.name)
             put("gnss_muted", t.gnssMuted)
+            putFinite("mag_heading_deg", t.magHeadingDeg)
+            put("mag_accuracy", t.magAccuracy)
+            putFinite("mount_offset_deg", t.mountOffsetDeg)
             putFinite("inference_ms", t.inferenceMs)
             putFinite("tick_ms", t.tickMs)
         }
@@ -216,6 +224,7 @@ class TelemetryUploader : Closeable {
         private val EXTENDED_COLUMNS = listOf(
             "gyro_bias_dps", "heading_unc_deg", "gnss_nis", "yaw_clamp_count",
             "map_on_road", "map_unc_m", "tilt_rate_rps", "handling", "vehicle_mode", "gnss_muted", "tick_interval_ms",
+            "dv_bias", "mag_heading_deg", "mag_accuracy", "mount_offset_deg",
         )
     }
 }

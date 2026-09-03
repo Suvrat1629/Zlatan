@@ -25,6 +25,28 @@ interface PositioningEngine {
 
     fun onGnssLost(tNanos: Long)
 
+    /**
+     * Tilt-compensated compass azimuth, degrees clockwise from MAGNETIC north, plus the vendor's
+     * own accuracy rating for it (SensorManager.SENSOR_STATUS_*).
+     *
+     * The compass reads the phone's azimuth while the filter tracks the vehicle's heading; the two
+     * differ by however the phone was seated in its cradle. [declinationDeg] converts magnetic to
+     * true north — the frame the filter's heading and GNSS bearing already use. It is passed in
+     * rather than assumed because it depends on where on Earth the vehicle is, and folding it into
+     * the mount offset would leave that offset wrong as soon as the vehicle travelled.
+     *
+     * Always recorded; whether it is also fused is the filter's decision, gated on
+     * EngineConfig.useMagHeading and on the accuracy rating.
+     *
+     * Default no-op: engines that do not record telemetry have nothing to do with it.
+     */
+    fun onMagneticHeading(
+        tNanos: Long,
+        magneticHeadingDeg: Float,
+        accuracy: Int,
+        declinationDeg: Float = 0f,
+    ) {}
+
     val state: StateFlow<PositionState>
 
     companion object {

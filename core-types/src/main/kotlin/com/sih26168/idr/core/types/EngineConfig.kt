@@ -180,6 +180,16 @@ data class EngineConfig(
      * worse than a noisy estimate. The engine says so in telemetry when this fires.
      */
     val handlingMaxCoastSeconds: Double = 10.0,
+    // Online delta-model bias calibration (DvBiasEstimator). The delta model carries a
+    // device-specific offset (+0.5..1.8 m/s^2 measured on an S24 against ~0 on the training
+    // set), tracked against trusted GNSS and subtracted. Alpha is low because the offset is a
+    // slow device property and one inter-fix interval is a noisy look at it; at 0.05 the
+    // estimate is most of the way there after roughly 20 fixes. The dt bounds discard intervals
+    // too short to carry signal over GNSS speed noise, and ones long enough that the average
+    // prediction spans a different driving regime.
+    val dvBiasEmaAlpha: Float = 0.05f,
+    val dvBiasFixDtMinSeconds: Float = 0.2f,
+    val dvBiasFixDtMaxSeconds: Float = 5.0f,
 
     // WALK mode damping: published speed = min(speed * scale, cap). Car-trained models
     // misread gait as vehicle speed; this keeps walking display in a sane band.
@@ -190,7 +200,13 @@ data class EngineConfig(
     // road's bearing. Kills the gyro random-walk on straights (the dominant cross-track
     // error, Part C). Gated off while turning so it never fights a real turn.
     val roadHeadingGain: Double = 0.08,
-    val roadHeadingMaxDistM: Double = 15.0,
+    /** Confidence gate on the road-heading correction, metres. Compared against
+     *  MapMatchResult.uncertaintyM -- the matcher's positional uncertainty, NOT a perpendicular
+     *  distance, which is what the old road_heading_max_dist_m name implied. The pre-EKF gate did
+     *  read a perpendicular distance, via MapMatcher.matchedDistanceM(), but no matcher has ever
+     *  overridden that method: it returns the interface default of null, so the gate it guarded
+     *  could never pass. Renamed rather than reverted, because reverting restores a dead gate. */
+    val roadHeadingMaxUncertaintyM: Double = 15.0,
     val roadHeadingMaxTurnRps: Double = 0.15,
 
     // Physical slew limits on the published speed: no ground vehicle gains more than
@@ -255,6 +271,72 @@ data class EngineConfig(
     // speed (Android's own bearing gets noisy/unreliable near-stationary).
     val ekfMinBearingTrustSpeedMps: Float = 3f,
     val ekfGnssBearingNoiseDeg: Float = 5f,
+
+    // Road bearing as a heading measurement for the EKF. The pre-EKF engine already pulled the
+    // gyro heading toward the matched road's bearing (see roadHeadingGain below); that correction
+    // went dark when the EKF took ownership of heading, because nudging the gyro estimator
+    // underneath the filter would inject the whole correction as unweighted rotation. This is the
+    // same correction re-entered the right way: as a weighted measurement on theta, under the
+    // same gates.
+    //
+    // OFF by default, on the same measure-first discipline as useGnssNisGate and useHandlingGate.
+    // The update fires every tick with the same segment bearing, so the filter counts one
+    // geometric fact as outputRateHz independent observations; balanced against the heading ARW
+    // the effective sigma settles near 3 deg, tighter than the 5 deg GNSS bearing it would then
+    // outvote. "Restores shipped behaviour" is not quite a defence either: the pre-EKF nudge
+    // applied a 0.08 gain, not a full-weight measurement.
+    //
+    // Enable for a drive, confirm heading is not dragged toward segment bearings through curves,
+    // then either keep it or rate-limit the update to segment changes.
+    val useRoadBearingHeading: Boolean = false,
+    // Wider than the GNSS bearing noise on purpose: a road's bearing is its polyline's bearing, so
+    // a gentle curve or a wide junction sits 10-15 degrees off the vehicle's true heading. The
+    // road is the fallback reference, not the better one.
+    // NOTE: the update is applied every tick with the same segment bearing, so the filter counts
+    // one geometric fact as outputRateHz independent observations and the effective weight is far
+    // tighter than this sigma reads. That over-weighting is why useRoadBearingHeading ships off.
+    // Harmless on a straight; on a gentle curve inside the turn gate it lags heading toward the
+    // segment. Rate-limiting to segment changes is the fix, and is deliberately not in this PR.
+    val ekfRoadBearingNoiseDeg: Float = 10f,
+
+    // --- compass as a heading measurement, with the mount offset as a state ---
+    // The compass reads the PHONE's azimuth; the filter tracks the VEHICLE's heading. They differ
+    // by however the driver seated the phone, so the compass is unusable until that offset is
+    // known -- and it cannot be known in advance. Carried as a filter state instead: with a wide
+    // prior on the offset and a tight one on heading, an early compass reading corrects the offset;
+    // once the offset has converged and GNSS drops, the same reading corrects heading. The
+    // covariance decides which, so there is no mode to switch and get wrong.
+    //
+    // OFF by default. Unlike useRoadBearingHeading this is a genuinely new fusion input, not a
+    // restored one, and the magnetometer is the sensor the integration contract excluded for
+    // vehicle distortion. Turn it on after a drive where telemetry's (mag_heading_deg - heading)
+    // residual looks steady per mount at mag_accuracy = 3, which is what the compass columns were
+    // added to answer.
+    val useMagHeading: Boolean = false,
+    /** Prior 1-std on the mount offset, degrees. Wide on purpose: the phone's orientation in the
+     *  cradle is genuinely unknown, and a prior far wider than the heading's is what routes the
+     *  first compass innovation into the offset rather than into heading.
+     *
+     *  90, not 180. The filter linearises, and on a circular quantity a 180-degree 1-std is
+     *  effectively uniform -- precisely where a linearised update is least trustworthy. 90 still
+     *  dwarfs the 30-degree heading prior by the factor that makes the routing work, and it keeps
+     *  the innovation inside the range where the small-angle behaviour of the update holds. */
+    val ekfInitialMountOffsetDeg: Float = 90f,
+    /** Mount-offset random walk, deg per sqrt(second). Small but never zero: a converged offset
+     *  with no process noise could never recover from the phone being knocked or re-seated
+     *  mid-drive, which is the only thing that actually changes it. Sized by measurement, not
+     *  taste -- MagneticHeadingTest.recoversAfterThePhoneIsReSeated drives a worst-case 180-degree
+     *  re-seat, and the recovery times are 0.05 -> ~5 min, 0.2 -> ~60 s, 0.5 -> ~30 s. 0.2 is the
+     *  slowest value that recovers inside a minute, and it stays a factor of 20 below the heading
+     *  ARW, so during a blackout the compass innovation still lands on heading rather than being
+     *  absorbed by an offset that has gone soft. */
+    val ekfMountOffsetRandomWalkDegPerSqrtSec: Float = 0.2f,
+    /** Compass measurement noise at the vendor's HIGH accuracy rating. Wider than GNSS bearing:
+     *  even a well-calibrated compass sits inside a steel box with a running motor in it. */
+    val ekfMagHeadingNoiseHighDeg: Float = 10f,
+    /** At MEDIUM. Wide enough that a mediocre reading nudges rather than steers; LOW and
+     *  UNRELIABLE are not used at all. */
+    val ekfMagHeadingNoiseMediumDeg: Float = 25f,
 
     // --- gyro bias state (heading work plan F3) ---
     // The error budget needs the yaw-rate bias held near 0.01 deg/s to keep cross-track inside

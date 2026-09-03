@@ -26,10 +26,14 @@ object EngineFactory {
     private const val DELTA_ASSET = "engine_delta.tflite"
     private const val DELTA_MANIFEST_ASSET = "delta.manifest.json"
 
-    fun create(context: Context, startAt: LatLon = DEFAULT_START): PositioningEngine {
+    fun create(
+        context: Context,
+        startAt: LatLon = DEFAULT_START,
+        initialDvBiasMps2: Float = 0f,
+    ): PositioningEngine {
         val config = loadConfig(context)
         return try {
-            buildRealEngine(context, config, startAt)
+            buildRealEngine(context, config, startAt, initialDvBiasMps2)
         } catch (e: AssetManifestMismatchException) {
             // Deliberately NOT caught by the StubEngine fallback below. That fallback exists for a
             // MISSING model, which is a legitimate development state. A model that is present but
@@ -49,7 +53,12 @@ object EngineFactory {
         }
     }
 
-    private fun buildRealEngine(context: Context, config: EngineConfig, startAt: LatLon): PositioningEngine {
+    private fun buildRealEngine(
+        context: Context,
+        config: EngineConfig,
+        startAt: LatLon,
+        initialDvBiasMps2: Float,
+    ): PositioningEngine {
         val provider = AndroidAssetProvider(context).build(
             listOf(AndroidAssetProvider.PackagedEntry(MODEL_KIND, MODEL_ASSET, MODEL_MANIFEST_ASSET))
         )
@@ -87,6 +96,7 @@ object EngineFactory {
         return RealEngine(
             config = config, speedEstimator = estimator, normalizer = normalizer, startAt = startAt,
             deltaEstimator = deltaEstimator, deltaNormalizer = deltaNormalizer,
+            initialDvBiasMps2 = initialDvBiasMps2,
             mapMatcher = RoadsLoader.load(context, config),
             fusionFilter = fusionFilter,
         )
@@ -139,6 +149,19 @@ object EngineFactory {
             .resolve(MODEL_KIND)?.manifest?.version ?: "unknown"
     } catch (e: Exception) {
         "unknown"
+    }
+
+    /**
+     * Delta-model version, for keying the persisted dv-bias. A new delta model has its own
+     * offset, so seeding it with the previous model's learned value would start the estimator
+     * further from the truth than zero does.
+     */
+    fun deltaModelVersion(context: Context): String = try {
+        AndroidAssetProvider(context)
+            .build(listOf(AndroidAssetProvider.PackagedEntry(DELTA_KIND, DELTA_ASSET, DELTA_MANIFEST_ASSET)))
+            .resolve(DELTA_KIND)?.manifest?.version ?: "none"
+    } catch (e: Exception) {
+        "none"
     }
 
     private val DEFAULT_START = LatLon(12.9716, 77.5946)

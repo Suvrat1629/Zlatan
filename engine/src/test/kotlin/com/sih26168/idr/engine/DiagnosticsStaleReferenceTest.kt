@@ -32,6 +32,12 @@ class DiagnosticsStaleReferenceTest {
         headingUncertaintyDeg = Float.NaN, gnssNis = Float.NaN, yawClampCount = 0,
         mapMatchOnRoad = false, mapMatchUncertaintyM = Float.NaN,
         inferenceMs = 1f, tickMs = 5f,
+        // Merge fix-up: this branch adds four required TelemetryTick fields. Filled with the
+        // same "not measured" values the engine publishes when the feature is off, so
+        // neither test's subject changes. Deliberately not given defaults on the data class:
+        // a default here is how a producer silently ships a plausible zero.
+        dvBiasMps2 = Float.NaN, magHeadingDeg = Float.NaN, magAccuracy = -1,
+        mountOffsetDeg = Float.NaN,
     )
 
     private fun diag() = Diagnostics(
