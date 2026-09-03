@@ -27,6 +27,28 @@ data class TelemetryTick(
     /** Horizontal linear-acceleration magnitude from the feature window, m/s^2. */
     val aHorizMps2: Float,
     val stationary: Boolean,
+    /** Window-mean gyro rate perpendicular to gravity, rad/s — the handling detector's raw input.
+     *  Logged unconditionally so the physics-argued threshold can be replaced by a measured
+     *  distribution after the first real drive, before it is trusted any further. */
+    /** Real elapsed time this tick covered, milliseconds. Nominal is 1000/outputRateHz; anything
+     *  much above it means the scheduler was starved, which used to be invisible because the engine
+     *  integrated the nominal value regardless (TODO.md K1). */
+    val tickIntervalMs: Float,
+    val tiltRateRadS: Float,
+    /** Whether the handling detector fired this tick. This is the VERDICT, independent of whether
+     *  `use_handling_gate` let it act — with the gate in measure-only mode this column is the
+     *  calibration data. */
+    val handling: Boolean,
+    /** The vehicle mode selected by the operator. Recorded because it changes the published speed
+     *  (WALK damps by `walkingSpeedScale`) and was previously unrecoverable from the data: session
+     *  20260831-035044 had to be diagnosed as a mis-set selector by inference from the speed cap
+     *  (TODO.md H8). Nobody analysing a session should have to guess whether damping was applied. */
+    val vehicleMode: VehicleMode,
+    /** True when GNSS was deliberately muted for a blackout test rather than genuinely unavailable.
+     *  Without this, a controlled probe and a real signal loss are identical in the data — both show
+     *  DEAD_RECKONING and no fixes — yet they are not equivalent tests: a mute cuts cleanly from a
+     *  good fix, real denial arrives after degraded multipath (TODO.md H10). */
+    val gnssMuted: Boolean,
     val mode: Mode,
     val satsInFix: Int,
     val irnssSatsInFix: Int,
@@ -37,6 +59,23 @@ data class TelemetryTick(
     val gnssLat: Double,
     val gnssLon: Double,
     val uncertaintyM: Float,
+    /** Estimated gyro yaw-rate bias, deg/s. NaN when the filter tracks no bias state.
+     *  Whether this converges to a stable value per device is the check that the bias state is
+     *  modelling bias rather than absorbing angle random walk. */
+    val gyroBiasDps: Float,
+    /** The filter's own heading 1-std, degrees. NaN when the filter tracks no heading. */
+    val headingUncertaintyDeg: Float,
+    /** Normalised innovation squared of the last GNSS position update. Chi-square, 2 DOF: a healthy
+     *  filter sits mostly below ~6. This is measured before it is ever enforced. */
+    val gnssNis: Float,
+    /** Yaw-rate samples REJECTED for exceeding the physical vehicle bound so far this session
+     *  (they contribute zero rotation rather than the clamped magnitude — see TODO.md G4).
+     *  A rising count during ordinary driving means the bound is set wrong. */
+    val yawClampCount: Long,
+    /** Whether the map matcher found a road for this tick. */
+    val mapMatchOnRoad: Boolean,
+    /** The matcher's reported positional 1-std, metres. NaN when off-road. */
+    val mapMatchUncertaintyM: Float,
     /** Wall time spent inside the model call, milliseconds. */
     val inferenceMs: Float,
     /** Wall time for the whole engine tick, milliseconds. */
@@ -59,9 +98,39 @@ data class OutageRecord(
     val deadReckonedDistanceM: Double,
     /** Straight-line error between the engine's position and the first trusted fix, metres. */
     val errorM: Double,
+    /** Ground-truth distance travelled during the outage, metres, from GNSS. NaN when unknown.
+     *  This is the benchmark's denominator and the only honest one — see [driftPercent]. */
+    val trueDistanceM: Double = Double.NaN,
 ) {
+    /**
+     * Drift as a percentage of distance travelled — the benchmark metric.
+     *
+     * **Divided by ground truth, not by the engine's own belief.** It used to divide by
+     * [deadReckonedDistanceM], which is wrong in the worst possible way: the denominator is itself
+     * a product of the error being measured, so the further the engine over-travels the smaller the
+     * reported drift becomes. The metric improved as the system got worse.
+     *
+     * Measured on the 2026-08-31 bike session: the engine over-travelled 3.26x, and the old formula
+     * reported a median 42% where the true figure against GNSS distance was 154%. Off by the
+     * over-travel factor, in the flattering direction, on the headline number.
+     *
+     * Falls back to the old denominator only when truth is unavailable, and [driftIsAgainstTruth]
+     * says which was used so a reader is never silently handed the optimistic one.
+     */
     val driftPercent: Double
-        get() = if (deadReckonedDistanceM > 1.0) errorM / deadReckonedDistanceM * 100.0 else Double.NaN
+        get() = when {
+            trueDistanceM > 1.0 -> errorM / trueDistanceM * 100.0
+            deadReckonedDistanceM > 1.0 -> errorM / deadReckonedDistanceM * 100.0
+            else -> Double.NaN
+        }
+
+    val driftIsAgainstTruth: Boolean get() = trueDistanceM > 1.0
+
+    /** How much further the engine believed it travelled than it did. 1.0 is perfect; the bike
+     *  session measured 3.26. This is the speed error made visible, and it is what corrupted the
+     *  old drift metric. */
+    val overTravelRatio: Double
+        get() = if (trueDistanceM > 1.0) deadReckonedDistanceM / trueDistanceM else Double.NaN
 }
 
 /**
@@ -90,12 +159,29 @@ data class SessionSummary(
     val speedSignedBiasMps: Double,
     val speedMaeMps: Double,
     val speedPairs: Long,
+    /** Signed model error BELOW the analysis floor, m/s, and how many ticks it covers.
+     *  The headline ratio excludes these — correctly, since a ratio explodes as speed goes to zero —
+     *  but that excluded a quarter of one ride and precisely the band where phantom speed lives.
+     *  Reported as a residual so it stays meaningful at a standstill. */
+    val lowSpeedResidualMedianMps: Double = Double.NaN,
+    val lowSpeedPairs: Long = 0,
     /** Heading held by the engine minus GNSS course, degrees, while moving. */
     val headingErrorMedianDeg: Double,
     val headingErrorP90Deg: Double,
     /** a_horiz / (v * |omega|) during turns. Well below 1 suggests phone rotation, not vehicle. */
     val yawConsistencyMedian: Double,
     val suspectedShakeEvents: Int,
+    /** Final gyro bias estimate, deg/s, and its spread over the second half of the session. A
+     *  converged bias is stable; one that keeps moving is absorbing noise, not modelling bias. */
+    val gyroBiasFinalDps: Double,
+    val gyroBiasStabilityDps: Double,
+    /** Distribution of the GNSS innovation, which is what decides whether the NIS gate can safely
+     *  be switched from measuring to rejecting. */
+    val gnssNisMedian: Double,
+    val gnssNisP90: Double,
+    val yawClampCount: Long,
+    /** Share of ticks where the matcher found a road. */
+    val mapMatchOnRoadPercent: Double,
     val outages: List<OutageRecord>,
     val markers: List<TelemetryMarker>,
     val warnings: List<String>,

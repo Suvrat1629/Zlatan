@@ -12,22 +12,21 @@ Phase 0 of `plan.md` / `docs/architecture-android.md` §15 is implemented:
 | `:core-types` | `PositioningEngine` seam, `Mode`, `PositionState`, `EngineConfig`, geo helpers | ✅ built, tested |
 | `:core-assets` | Versioned-asset manifest + resolver + checksum verification | ✅ built, tested |
 | `:core-model` | `SpeedEstimator` interface, self-test runner, constant-speed stub | ✅ built, tested |
-| `:core-nav` | Dead reckoning, mode arbiter, heading/fusion/NHC **placeholders** (no owner yet — see below) | ✅ built, tested |
+| `:core-nav` | Dead reckoning, mode arbiter, mount-agnostic yaw, forward-axis estimation, error-state EKF | ✅ built, tested |
 | `:core-map` | `MapMatcher` interface + no-op (no owner yet — see below) | ✅ built |
 | `:core-replay` | Canonical trace format + replay harness (no device needed to test the engine) | ✅ built |
 | `:engine` | Ring buffer, conditioning, anti-alias decimator, feature extractor, normalizer, `StubEngine`, `RealEngine` | ✅ built, **28 tests passing** |
-| `:android-sensors` | `SensorSource` — accel/gravity/gyro at native rate | ✅ written, **not compiled** (no Android SDK in the environment this was built in) |
-| `:android-assets` | Packaged-asset resolution off `context.assets` | ✅ written, **not compiled** |
-| `:android-model` | `TfliteSpeedEstimator` — the TFLite runtime wrapper | ✅ written, **not compiled** |
-| `:app` | `MainActivity`, `EngineService`, `GnssSource`, map screen, demo controls | ✅ written, **not compiled** |
+| `:android-sensors` | `SensorSource` — accel/gravity/gyro at native rate | ✅ built, field-verified (453 Hz measured) |
+| `:android-assets` | Packaged-asset resolution off `context.assets` | ✅ built, manifest shape + self-test enforced on load |
+| `:android-model` | `TfliteSpeedEstimator` — the TFLite runtime wrapper | ✅ built, field-verified (inference p95 2.9 ms) |
+| `:app` | `MainActivity`, `EngineService`, `GnssSource`, map screen, demo controls | ✅ built, ridden in the field |
 
-**"Not compiled" means exactly that** — this was built in an environment with Gradle and
-a JDK but no Android SDK, so the Android-specific modules could not be run through
-`compileDebugKotlin`/`assembleDebug` here. Every pure-Kotlin module (everything below the
-`android.*` import-ban line) **was** actually compiled and test-run via `./gradlew`
-during development, repeatedly, and is verified working. **First thing to do when this
-opens in Android Studio: `./gradlew assembleDebug` and fix whatever the real compiler
-finds** — treat the Android layer as reviewed-but-unverified, not as tested code.
+**Superseded, 2026-09-01.** This section used to say the Android modules were written but never
+compiled, because the environment they were first built in had no Android SDK. That has not been
+true for some time: `./gradlew assembleDebug` succeeds, and the app has been ridden in the field for
+several days producing the telemetry that drives current development. A 2026-09-01 audit of the
+problem-statement deliverables read this paragraph and reported the Android layer as unverified — a
+stale caveat is as misleading as a wrong claim, so it is corrected rather than deleted.
 
 ## What's missing on purpose
 

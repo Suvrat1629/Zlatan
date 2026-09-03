@@ -29,3 +29,25 @@ object Geo {
         return EARTH_RADIUS_M * c
     }
 }
+
+/** A point in a local tangent-plane frame: metres north and east of some anchor. */
+data class LocalEnu(val north: Double, val east: Double)
+
+/**
+ * Local tangent-plane (north, east) frame anchored at a fixed lat/lon, using an
+ * equirectangular approximation — accurate to well under a metre at city scale.
+ */
+class LocalFrame(private val anchor: LatLon) {
+    private val metresPerDegLat = Geo.EARTH_RADIUS_M * PI / 180.0
+    private val cosAnchorLat = cos(Math.toRadians(anchor.lat))
+
+    fun toLocal(p: LatLon): LocalEnu = LocalEnu(
+        north = (p.lat - anchor.lat) * metresPerDegLat,
+        east = (p.lon - anchor.lon) * metresPerDegLat * cosAnchorLat,
+    )
+
+    fun toLatLon(local: LocalEnu): LatLon = LatLon(
+        lat = anchor.lat + local.north / metresPerDegLat,
+        lon = anchor.lon + local.east / (metresPerDegLat * cosAnchorLat),
+    )
+}

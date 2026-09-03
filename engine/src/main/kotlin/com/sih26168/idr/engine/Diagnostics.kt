@@ -33,11 +33,18 @@ class Diagnostics(
 ) {
     private val speedRatios = ArrayList<Double>()
     private val speedResiduals = ArrayList<Double>()
+    private val lowSpeedResiduals = ArrayList<Double>()
     private val headingErrors = ArrayList<Double>()
     private val yawConsistency = ArrayList<Double>()
     private val inferenceMs = ArrayList<Double>()
     private val tickMs = ArrayList<Double>()
     private val imuGapsMs = ArrayList<Double>()
+    private val gyroBiasDps = ArrayList<Double>()
+    private val gnssNis = ArrayList<Double>()
+    private var onRoadTicks = 0L
+    private var matcherTicks = 0L
+    private var yawClampCount = 0L
+    private var yawClampBaseline = -1L
     private val markers = ArrayList<TelemetryMarker>()
     private val outages = ArrayList<OutageRecord>()
     private val warnings = LinkedHashSet<String>()
@@ -52,6 +59,17 @@ class Diagnostics(
     // Outage tracking
     private var outageStartNanos = 0L
     private var outageDistanceM = 0.0
+    /**
+     * Ground-truth path length during the current outage, from GNSS fixes that were withheld from
+     * the engine but not from the record.
+     *
+     * During a deliberate blackout the phone still has a perfectly good fix — the app is choosing
+     * not to use it. Discarding it as well meant an outage could only be scored endpoint-to-
+     * endpoint, and straight-line displacement badly understates a path with turns in it. Keeping
+     * it here scores the probe properly without any of it reaching the filter.
+     */
+    private var outageTruthDistanceM = 0.0
+    private var lastTruthPos: LatLon? = null
     private var prevTickPos: LatLon? = null
     private var inOutage = false
     // The re-acquisition anchor arrives before the tick that closes the outage record, so it is
@@ -97,16 +115,53 @@ class Diagnostics(
         latest = t
         if (t.tickMs.isFinite()) tickMs.add(t.tickMs.toDouble())
         if (t.inferenceMs.isFinite() && t.inferenceMs > 0f) inferenceMs.add(t.inferenceMs.toDouble())
+        if (t.gyroBiasDps.isFinite()) gyroBiasDps.add(t.gyroBiasDps.toDouble())
+        if (t.gnssNis.isFinite()) gnssNis.add(t.gnssNis.toDouble())
+        // The engine's counter is monotonic from engine construction, but a Diagnostics instance
+        // covers ONE recording session. Store the delta since this session's first tick, or the
+        // summary reports every rejection since the app started.
+        //
+        // Measured on session 20260902_123708: reported 18,670 clamps where only 31 happened during
+        // the recording — a 600x overstatement, and it made the two-wheeler yaw bound look like it
+        // was firing constantly when it barely fires at all.
+        if (yawClampBaseline < 0) yawClampBaseline = t.yawClampCount
+        yawClampCount = t.yawClampCount - yawClampBaseline
+        matcherTicks++
+        if (t.mapMatchOnRoad) onRoadTicks++
+
+        // GNSS-derived references are only meaningful while GNSS is actually being received.
+        //
+        // `vGnssMps` and `gnssBearingDeg` both hold the LAST trusted values, so during a blackout
+        // they are frozen at whatever they were when the fix was lost. Scoring against them then
+        // measures how far the vehicle has moved since, not how wrong the estimate is — and it does
+        // so in the direction that makes a long outage look like an estimator failure.
+        //
+        // Measured on session 20260902_123708, which was 77% muted: the summary reported a heading
+        // error of 18.05 deg median where the true GNSS-aided figure is 2.8 deg. Same class of bug
+        // as the drift denominator that divided by the engine's own belief (see OutageRecord):
+        // a metric contaminated by the very failure it exists to measure.
+        val gnssLive = t.mode == Mode.GNSS || t.mode == Mode.NAVIC
+        val vg = t.vGnssMps
 
         // --- speed residual, only where GNSS speed is meaningful ---
-        val vg = t.vGnssMps
-        if (vg.isFinite() && vg >= analysisFloorMps && t.vModelMps.isFinite()) {
+        if (gnssLive && vg.isFinite() && vg >= analysisFloorMps && t.vModelMps.isFinite()) {
             speedRatios.add((t.vModelMps / vg).toDouble())
             speedResiduals.add((t.vModelMps - vg).toDouble())
         }
 
+        // Low-speed error, tracked separately and NOT as a ratio.
+        //
+        // The analysis floor above is right for a ratio — v_model/v_gnss explodes as v_gnss goes to
+        // zero — but it silently excluded 26% of aided ticks on session 20260902_123708, and those
+        // are exactly where the phantom-speed failure lives. A summary that characterises only the
+        // fast three quarters of a ride hides the known failure mode. Reported as a signed residual,
+        // which stays meaningful at zero.
+        if (gnssLive && vg.isFinite() && vg < analysisFloorMps && t.vModelMps.isFinite()) {
+            lowSpeedResiduals.add((t.vModelMps - vg).toDouble())
+        }
+
         // --- heading residual against GNSS course while moving ---
-        if (vg.isFinite() && vg >= analysisFloorMps && t.gnssBearingDeg.isFinite()) {
+        if (gnssLive && vg.isFinite() && vg >= analysisFloorMps && t.gnssBearingDeg.isFinite()) {
             headingErrors.add(abs(wrapDeg(t.headingDeg - t.gnssBearingDeg)))
         }
 
@@ -131,6 +186,8 @@ class Diagnostics(
             inOutage = true
             outageStartNanos = t.tNanos
             outageDistanceM = 0.0
+            outageTruthDistanceM = 0.0
+            lastTruthPos = null
             pendingTruth = null
             pendingBelief = null
         } else if (denied) {
@@ -152,6 +209,7 @@ class Diagnostics(
                     durationSeconds = (t.tNanos - outageStartNanos) / 1e9,
                     deadReckonedDistanceM = outageDistanceM,
                     errorM = errM,
+                    trueDistanceM = if (outageTruthDistanceM > 0.0) outageTruthDistanceM else Double.NaN,
                 )
             )
         }
@@ -163,11 +221,54 @@ class Diagnostics(
      * the one arriving during an outage is the anchor — and the outage record does not exist yet
      * at that point, so the pair is stashed and [onTick] consumes it when it closes the record.
      */
+    /**
+     * A GNSS fix the engine is NOT being given — because GNSS is muted for a blackout test — but
+     * which is still perfectly valid ground truth. Accumulates the true path length so the outage
+     * can be scored against distance actually travelled rather than straight-line displacement.
+     *
+     * Nothing here touches the filter, the position, or any published value. It exists purely so a
+     * controlled probe produces a scorable number.
+     */
+    @Synchronized
+    fun onGnssTruthOnly(truth: LatLon) {
+        if (!inOutage) { lastTruthPos = truth; return }
+        lastTruthPos?.let { outageTruthDistanceM += Geo.distanceM(it, truth) }
+        lastTruthPos = truth
+    }
+
     @Synchronized
     fun onReacquisition(truth: LatLon, engineBelief: LatLon) {
         if (!inOutage) return
         pendingTruth = truth
         pendingBelief = engineBelief
+    }
+
+    /**
+     * Close an outage that is still open, so a session ending mid-blackout still reports it.
+     *
+     * `onTick` only closes an outage when the mode leaves DEAD_RECKONING, so a blackout that runs to
+     * the end of the ride was silently dropped. That is survivorship bias in the worst direction:
+     * unclosed outages are by definition the ones that ran longest, so the drift distribution was
+     * missing its own worst tail. Session 20260902_123708 had 22 blackouts and reported 21.
+     *
+     * The error is left NaN because there is no reacquisition fix to measure against — an outage
+     * with no truth is recorded as having happened, with its duration and distances, and explicitly
+     * without a drift figure. Fabricating one would be worse than the omission this fixes.
+     */
+    @Synchronized
+    fun closeOpenOutage(tNanos: Long) {
+        if (!inOutage) return
+        inOutage = false
+        outages.add(
+            OutageRecord(
+                startNanos = outageStartNanos,
+                endNanos = tNanos,
+                durationSeconds = (tNanos - outageStartNanos) / 1e9,
+                deadReckonedDistanceM = outageDistanceM,
+                errorM = Double.NaN,
+                trueDistanceM = if (outageTruthDistanceM > 0.0) outageTruthDistanceM else Double.NaN,
+            )
+        )
     }
 
     /** One short line for the debug overlay and for logcat. */
@@ -185,7 +286,10 @@ class Diagnostics(
             append("sats=${t.satsInFix}/${t.irnssSatsInFix} ")
             append("rate=${fmt(imuRateHz())}Hz ")
             append("inf=${fmt(percentile(inferenceMs, 0.95))}ms ")
-            append("shake=$shakeEvents")
+            append("shake=$shakeEvents ")
+            append("bias=${fmt(t.gyroBiasDps)}dps ")
+            append("nis=${fmt(median(gnssNis))} ")
+            append("clamp=${t.yawClampCount}")
         }
     }
 
@@ -210,10 +314,20 @@ class Diagnostics(
         speedSignedBiasMps = mean(speedResiduals),
         speedMaeMps = mean(speedResiduals.map { abs(it) }),
         speedPairs = speedRatios.size.toLong(),
+        lowSpeedResidualMedianMps = median(lowSpeedResiduals),
+        lowSpeedPairs = lowSpeedResiduals.size.toLong(),
         headingErrorMedianDeg = median(headingErrors),
         headingErrorP90Deg = percentile(headingErrors, 0.90),
         yawConsistencyMedian = median(yawConsistency),
         suspectedShakeEvents = shakeEvents,
+        gyroBiasFinalDps = gyroBiasDps.lastOrNull() ?: Double.NaN,
+        // Spread over the second half only: the first half includes convergence from the initial
+        // guess, which would make a perfectly healthy estimate look unstable.
+        gyroBiasStabilityDps = stdDev(gyroBiasDps.drop(gyroBiasDps.size / 2)),
+        gnssNisMedian = median(gnssNis),
+        gnssNisP90 = percentile(gnssNis, 0.90),
+        yawClampCount = yawClampCount,
+        mapMatchOnRoadPercent = if (matcherTicks > 0) 100.0 * onRoadTicks / matcherTicks else Double.NaN,
         outages = outages.toList(),
         markers = markers.toList(),
         warnings = warnings.toList(),

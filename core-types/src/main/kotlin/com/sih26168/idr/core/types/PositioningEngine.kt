@@ -20,6 +20,7 @@ interface PositioningEngine {
         lat: Double, lon: Double,
         speedMps: Float, bearingDeg: Float, horizAccM: Float,
         satsInFix: Int, irnssSatsInFix: Int,
+        bearingValid: Boolean = false,
     )
 
     fun onGnssLost(tNanos: Long)

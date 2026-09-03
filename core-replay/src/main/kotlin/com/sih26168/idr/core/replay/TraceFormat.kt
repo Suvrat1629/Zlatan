@@ -20,8 +20,14 @@ sealed class TraceEvent {
     data class Lost(override val tNanos: Long) : TraceEvent()
 }
 
-class TraceWriter(file: File) : Closeable {
-    private val writer: BufferedWriter = file.bufferedWriter()
+class TraceWriter(private val writer: BufferedWriter) : Closeable {
+    /** Convenience for tests and replay tooling, which work with real files. */
+    constructor(file: File) : this(file.bufferedWriter())
+
+    /** The app writes to the phone's shared Documents/IDR folder, which MediaStore hands out as a
+     *  stream rather than a File — so a tester can retrieve the raw trace from the Files app
+     *  instead of needing adb and app-private storage. */
+    constructor(stream: java.io.OutputStream) : this(stream.bufferedWriter())
 
     fun write(event: TraceEvent) {
         val line = when (event) {
@@ -29,7 +35,7 @@ class TraceWriter(file: File) : Closeable {
                 "IMU,$tNanos,$ax,$ay,$az,$grx,$gry,$grz,$gx,$gy,$gz"
             }
             is TraceEvent.Gnss -> with(event.record) {
-                "GNSS,$tNanos,$lat,$lon,$speedMps,$bearingDeg,$horizAccM,$satsInFix,$irnssSatsInFix"
+                "GNSS,$tNanos,$lat,$lon,$speedMps,$bearingDeg,$horizAccM,$satsInFix,$irnssSatsInFix,$bearingValid"
             }
             is TraceEvent.Lost -> "LOST,${event.tNanos}"
         }
@@ -67,6 +73,9 @@ object TraceReader {
                     speedMps = parts[4].toFloat(), bearingDeg = parts[5].toFloat(),
                     horizAccM = parts[6].toFloat(),
                     satsInFix = parts[7].toInt(), irnssSatsInFix = parts[8].toInt(),
+                    // Older trace files (9 fields) predate bearing validity tracking --
+                    // default false (untrusted), consistent with GnssFixRecord's own default.
+                    bearingValid = if (parts.size > 9) parts[9].toBoolean() else false,
                 )
             )
             "LOST" -> TraceEvent.Lost(parts[1].toLong())

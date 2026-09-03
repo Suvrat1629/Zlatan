@@ -14,6 +14,26 @@ import java.io.File
  *
  * Schema version is in the header so a reader can tell what it is looking at when the columns
  * change, which they will.
+ *
+ *
+ * Version 3 is the union of two independent "schema 2"s that shipped on different branches -- the
+ * GNSS reference position, and the filter/heading diagnostics. Bumped rather than reusing 2, since
+ * two different column sets under one version number is worse than no version number at all.
+ *
+ * Version 4 adds the handling detector's raw input and verdict (`tilt_rate_rps`, `handling`). The
+ * threshold that gate uses is argued from vehicle physics rather than measured, so the column is
+ * what lets the first real drive replace the argument with a distribution.
+ *
+ * Version 5 adds `vehicle_mode`. WALK damps the published speed, so without this column a reader
+ * cannot tell whether damping was applied — which is how session 20260831-035044's mis-set selector
+ * had to be inferred from the speed cap rather than simply read.
+ *
+ * Version 6 adds `gnss_muted`, so a deliberate blackout probe is distinguishable from real signal
+ * loss — they are otherwise identical in the data, and they are not equivalent tests.
+ *
+ * Version 7 adds `tick_interval_ms` — the real elapsed time a tick covered. The engine used to
+ * integrate a nominal 100 ms regardless, losing 20.5% of elapsed time on a real ride, and nothing
+ * in the log made that visible.
  */
 class TelemetryWriter(
     private val writer: BufferedWriter,
@@ -27,7 +47,7 @@ class TelemetryWriter(
     private var rows = 0
 
     init {
-        writer.write("#schema=2")
+        writer.write("#schema=7")
         writer.newLine()
         writer.write(HEADER)
         writer.newLine()
@@ -39,8 +59,12 @@ class TelemetryWriter(
             listOf(
                 t.tNanos, t.vModelMps, t.dvMps2, t.vOutMps, t.vGnssMps, t.blendLambda,
                 t.yawRateRadS, t.headingDeg, t.gnssBearingDeg, t.aHorizMps2,
-                if (t.stationary) 1 else 0, t.mode, t.satsInFix, t.irnssSatsInFix,
-                t.lat, t.lon, t.gnssLat, t.gnssLon, t.uncertaintyM, t.inferenceMs, t.tickMs,
+                if (t.stationary) 1 else 0, t.tickIntervalMs, t.tiltRateRadS, if (t.handling) 1 else 0,
+                t.vehicleMode, if (t.gnssMuted) 1 else 0, t.mode, t.satsInFix, t.irnssSatsInFix,
+                t.lat, t.lon, t.gnssLat, t.gnssLon, t.uncertaintyM,
+                t.gyroBiasDps, t.headingUncertaintyDeg, t.gnssNis, t.yawClampCount,
+                if (t.mapMatchOnRoad) 1 else 0, t.mapMatchUncertaintyM,
+                t.inferenceMs, t.tickMs,
             ).joinToString(",")
         )
         writer.newLine()
@@ -60,7 +84,9 @@ class TelemetryWriter(
         const val HEADER =
             "t_nanos,v_model_mps,dv_mps2,v_out_mps,v_gnss_mps,blend_lambda," +
                 "yaw_rate_rad_s,heading_deg,gnss_bearing_deg,a_horiz_mps2," +
-                "stationary,mode,sats,irnss_sats,lat,lon,gnss_lat,gnss_lon,uncertainty_m,inference_ms,tick_ms"
+                "stationary,tick_interval_ms,tilt_rate_rps,handling,vehicle_mode,gnss_muted,mode,sats,irnss_sats,lat,lon,gnss_lat,gnss_lon,uncertainty_m," +
+                "gyro_bias_dps,heading_unc_deg,gnss_nis,yaw_clamp_count," +
+                "map_on_road,map_unc_m,inference_ms,tick_ms"
     }
 }
 
@@ -85,18 +111,33 @@ object SummaryReport {
         appendLine("ratio median  ${f(s.speedRatioMedian)}   IQR ${f(s.speedRatioIqr)}")
         appendLine("signed bias   ${f(s.speedSignedBiasMps)} m/s     MAE ${f(s.speedMaeMps)} m/s")
         appendLine("  (ratio near 1 with a wide IQR and near-zero bias = random error, not scale)")
+        appendLine(
+            "low-speed err ${f(s.lowSpeedResidualMedianMps)} m/s median over ${s.lowSpeedPairs} ticks " +
+                "below the ${"%.0f".format(3.0)} m/s floor"
+        )
+        appendLine("  (the ratio above EXCLUDES these; phantom speed lives here, so read both)")
         appendLine()
         appendLine("-- heading --")
         appendLine("error median  ${f(s.headingErrorMedianDeg)} deg   p90 ${f(s.headingErrorP90Deg)} deg")
         appendLine("yaw consistency median ${f(s.yawConsistencyMedian)}  (a_horiz / v*omega, expect >= 1)")
         appendLine("suspected shake events ${s.suspectedShakeEvents}")
+        appendLine("yaw clamps at the physical bound ${s.yawClampCount}")
+        appendLine()
+        appendLine("-- filter --")
+        appendLine("gyro bias     ${f(s.gyroBiasFinalDps)} deg/s   stability ${f(s.gyroBiasStabilityDps)} deg/s")
+        appendLine("  (a converged bias is stable; one that keeps moving is absorbing noise)")
+        appendLine("gnss NIS      median ${f(s.gnssNisMedian)}   p90 ${f(s.gnssNisP90)}")
+        appendLine("  (chi-square 2 DOF: below ~6 is healthy. Decides if the NIS gate can reject)")
+        appendLine("map matcher   on-road ${f(s.mapMatchOnRoadPercent)}% of ticks")
         appendLine()
         appendLine("-- outages (${s.outages.size}) --")
         if (s.outages.isEmpty()) appendLine("none")
         s.outages.forEachIndexed { i, o ->
             appendLine(
-                "#${i + 1}  ${f(o.durationSeconds)}s  dr=${f(o.deadReckonedDistanceM)}m  " +
-                    "err=${f(o.errorM)}m  drift=${f(o.driftPercent)}%"
+                "#${i + 1}  ${f(o.durationSeconds)}s  true=${f(o.trueDistanceM)}m  " +
+                    "dr=${f(o.deadReckonedDistanceM)}m  over=${f(o.overTravelRatio)}x  " +
+                    "err=${f(o.errorM)}m  drift=${f(o.driftPercent)}%" +
+                    if (o.driftIsAgainstTruth) "" else "  (vs dr — no truth)"
             )
         }
         if (s.markers.isNotEmpty()) {
