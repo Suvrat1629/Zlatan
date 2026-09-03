@@ -127,6 +127,11 @@ object SummaryReport {
         appendLine("ratio median  ${f(s.speedRatioMedian)}   IQR ${f(s.speedRatioIqr)}")
         appendLine("signed bias   ${f(s.speedSignedBiasMps)} m/s     MAE ${f(s.speedMaeMps)} m/s")
         appendLine("  (ratio near 1 with a wide IQR and near-zero bias = random error, not scale)")
+        appendLine(
+            "low-speed err ${f(s.lowSpeedResidualMedianMps)} m/s median over ${s.lowSpeedPairs} ticks " +
+                "below the ${"%.0f".format(3.0)} m/s floor"
+        )
+        appendLine("  (the ratio above EXCLUDES these; phantom speed lives here, so read both)")
         appendLine()
         appendLine("-- heading --")
         appendLine("error median  ${f(s.headingErrorMedianDeg)} deg   p90 ${f(s.headingErrorP90Deg)} deg")

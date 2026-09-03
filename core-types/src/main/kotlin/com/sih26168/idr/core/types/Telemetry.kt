@@ -180,6 +180,12 @@ data class SessionSummary(
     val speedSignedBiasMps: Double,
     val speedMaeMps: Double,
     val speedPairs: Long,
+    /** Signed model error BELOW the analysis floor, m/s, and how many ticks it covers.
+     *  The headline ratio excludes these — correctly, since a ratio explodes as speed goes to zero —
+     *  but that excluded a quarter of one ride and precisely the band where phantom speed lives.
+     *  Reported as a residual so it stays meaningful at a standstill. */
+    val lowSpeedResidualMedianMps: Double = Double.NaN,
+    val lowSpeedPairs: Long = 0,
     /** Heading held by the engine minus GNSS course, degrees, while moving. */
     val headingErrorMedianDeg: Double,
     val headingErrorP90Deg: Double,

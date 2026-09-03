@@ -83,6 +83,9 @@ class RealEngine(
     @Volatile private var lastYawRateRadS = 0f
     @Volatile private var lastGyroZ = 0f
     @Volatile private var lastGnssBearingDeg = Float.NaN
+    @Volatile private var lastGnssAccuracyM = Float.NaN
+    /** When GNSS last came back after a dead-reckoning stretch. 0 = never. */
+    @Volatile private var reacquiredAtNanos = 0L
     @Volatile private var lastGnssLat = Double.NaN
     @Volatile private var lastGnssLon = Double.NaN
     @Volatile private var lastInferenceMs = Float.NaN
@@ -342,6 +345,9 @@ class RealEngine(
     ) {
         diagnostics?.onGnssFix(tNanos)
         lastGnssBearingDeg = bearingDeg
+        lastGnssAccuracyM = horizAccM
+        // A fix arriving while the arbiter still reports dead reckoning IS the reacquisition.
+        if (modeArbiter.currentMode(tNanos) == Mode.DEAD_RECKONING) reacquiredAtNanos = tNanos
         lastGnssLat = lat
         lastGnssLon = lon
         // The first trusted fix after a blackout is the only truth we get. Hand it to
@@ -586,10 +592,16 @@ class RealEngine(
             // No delta term: fade from the GNSS anchor to the absolute model on the same timescale
             // the blend has always used, rather than snapping to the absolute model the instant a
             // fix is lost. lambda is still reported, so telemetry keeps its meaning.
+            // Before the FIRST fix there is no anchor to fade from, so the model is all there is —
+            // but it must still respect the cap. This previously returned an uncapped 1.0, handing
+            // full weight to the model at the one moment its output cannot be checked against
+            // anything. Seen in the field: `blend_lambda` reached 1.000 on a ride whose per-outage
+            // values were correctly pinned at 0.05 (TODO.md L9).
             val tSec = if (lastAnchorNanos == 0L) Double.MAX_VALUE
                        else ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
-            val lam = if (tSec == Double.MAX_VALUE) 1f
-                      else (tSec / (tSec + config.blendTauSeconds)).toFloat().coerceAtMost(activeBlendMaxLambda)
+            val lam = (if (tSec == Double.MAX_VALUE) 1f
+                       else (tSec / (tSec + config.blendTauSeconds)).toFloat())
+                .coerceAtMost(activeBlendMaxLambda)
             lastLambda = lam
             lastDvMps2 = Float.NaN
             blendSpeedMps = when {
@@ -690,7 +702,14 @@ class RealEngine(
             matchResult.roadBearingDeg != null &&
             matchResult.uncertaintyM <= config.mapMatchMaxFuseUncertaintyM &&
             headingAgrees
-        val fuseMapMatch = mapMatchFusionEnabled && gatePasses
+        // Hold map fusion off briefly after a fix returns. The matcher's hypothesis chain was built
+        // during the blackout, so at reacquisition it is often still locked to whatever road the
+        // drifting estimate wandered onto. Letting GNSS re-anchor first, unopposed, is what lets
+        // the matcher re-converge from a correct position instead of defending a wrong one.
+        val sinceReacquireSec = if (reacquiredAtNanos == 0L) Double.MAX_VALUE
+                                else (tEndNanos - reacquiredAtNanos) / 1e9
+        val settlingAfterFix = sinceReacquireSec < config.mapMatchReacquireHoldOffSeconds
+        val fuseMapMatch = mapMatchFusionEnabled && gatePasses && !settlingAfterFix
         // Gate statistics run whenever the matcher COULD be fused (i.e. the HMM), even with
         // use_map_match_fusion off -- a display-only drive on the real 25k-way graph then
         // still reveals whether the toy-fixture-calibrated 15 m gate fires often enough,
@@ -720,10 +739,27 @@ class RealEngine(
             // "reset the reckoner to the matched point", this is a covariance-weighted partial
             // pull that only touches cross-track -- it can't erase a genuine turn onto a cross
             // street (the HMM switches hypotheses as the sideways motion accumulates).
+            // The map may never claim to be more certain than the fix that positioned it.
+            //
+            // A snap is an INFERENCE conditioned on the estimate already being roughly right; a
+            // GNSS fix is a direct observation. Feeding cross-track sigma 2 m against a fix
+            // reporting 5 m accuracy inverts that, and the consequence was measured on
+            // 2026-09-04: after every reacquisition the filter reported 1.4-3.7 m uncertainty
+            // while sitting 20-68 m from the fix. Confidently wrong, and self-sustaining — once
+            // the covariance collapses, later fixes get almost no gain and the estimate cannot
+            // recover. The gyro bias locks at a wrong value for the same reason.
+            //
+            // The heading-agreement gate cannot catch this: the wrong road in that failure is
+            // PARALLEL to the right one, so its bearing agrees perfectly. Only GNSS can tell them
+            // apart, so GNSS has to be allowed to win.
+            val gnssAccuracyFloorM = lastGnssAccuracyM.takeIf { it.isFinite() && it > 0f }
+                ?: config.mapMatchMinCrossTrackSigmaM
             fusionFilter.updateWithMapMatch(
                 matchResult.position,
                 alongTrackSigmaM = config.mapMatchAlongTrackSigmaM,
-                crossTrackSigmaM = matchResult.uncertaintyM.coerceAtLeast(config.mapMatchMinCrossTrackSigmaM),
+                crossTrackSigmaM = matchResult.uncertaintyM
+                    .coerceAtLeast(config.mapMatchMinCrossTrackSigmaM)
+                    .coerceAtLeast(gnssAccuracyFloorM),
                 roadBearingDeg = matchResult.roadBearingDeg!!,
             )
         }

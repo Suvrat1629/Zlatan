@@ -33,6 +33,59 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
     private val density = context.resources.displayMetrics.density
     private fun dp(value: Float): Float = value * density
 
+    /**
+     * [ROAD_WIDTH_M] expressed in screen pixels at the current zoom and latitude.
+     *
+     * osmdroid strokes are in pixels, so a fixed width would mean a corridor that covers a lane at
+     * one zoom and a whole district at another. Deriving it from ground distance keeps the band
+     * meaning the same thing however far the user has zoomed out, and the clamp stops it becoming
+     * either invisible or a smear when they go to the extremes.
+     */
+    private fun roadWidthPx(): Float {
+        val lat = lastPoint?.latitude ?: mapView.mapCenter.latitude
+        val metresPerPixel = org.osmdroid.util.TileSystem.GroundResolution(lat, mapView.zoomLevelDouble)
+        if (metresPerPixel <= 0.0) return dp(MIN_CORRIDOR_DP)
+        return (ROAD_WIDTH_M / metresPerPixel).toFloat()
+            .coerceIn(dp(MIN_CORRIDOR_DP), dp(MAX_CORRIDOR_DP))
+    }
+
+    /** Zoom changes the metres-per-pixel scale, so every corridor is restroked when it moves. */
+    private fun refreshCorridorWidth() {
+        val w = roadWidthPx()
+        if (kotlin.math.abs(w - lastCorridorPx) < 0.5f) return
+        lastCorridorPx = w
+        corridorSegments.forEach { it.outlinePaint.strokeWidth = w }
+    }
+
+    private var lastCorridorPx = 0f
+    private var lastTrailPoint: GeoPoint? = null
+
+    private fun distanceM(a: GeoPoint, b: GeoPoint): Double {
+        val latRad = Math.toRadians(a.latitude)
+        val dLat = (b.latitude - a.latitude) * 111_320.0
+        val dLon = (b.longitude - a.longitude) * 111_320.0 * kotlin.math.cos(latRad)
+        return kotlin.math.hypot(dLat, dLon)
+    }
+
+    /**
+     * Drop the oldest segment once the trail exceeds [MAX_TRAIL_POINTS].
+     *
+     * Whole segments rather than individual points, so a dropped stretch never leaves a
+     * dead-reckoning span rendered as if it had been GNSS-tracked. At the spacing above this is
+     * several kilometres of history, which is more than any demo shows and far less than a session
+     * used to accumulate.
+     */
+    private fun trimTrail() {
+        var total = trailSegments.sumOf { it.actualPoints.size }
+        while (total > MAX_TRAIL_POINTS && trailSegments.size > 1) {
+            val oldTrail = trailSegments.removeAt(0)
+            val oldCorridor = corridorSegments.removeAt(0)
+            total -= oldTrail.actualPoints.size
+            mapView.overlays.remove(oldTrail)
+            mapView.overlays.remove(oldCorridor)
+        }
+    }
+
     private val mapView = MapView(context).apply {
         setMultiTouchControls(true)
         controller.setZoom(17.0)
@@ -120,6 +173,22 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
         setIcon(context.getDrawable(R.drawable.ic_position_dot))
         title = "You"
     }
+
+    /**
+     * Wide translucent band drawn beneath each trail segment, representing the WIDTH OF THE ROAD
+     * rather than a decorative thickness.
+     *
+     * The thin centre line is one point per 100 ms tick, so estimator wobble of a metre or two
+     * reads as a visibly ragged path even when the position is well inside the correct lane. That
+     * misrepresents the result in the opposite direction to the usual: it looks worse than it is.
+     *
+     * The band's width is [ROAD_WIDTH_M] converted to pixels at the current zoom and latitude, so
+     * it always covers a real road's worth of ground. That keeps the visual claim honest — map
+     * matching asserts "the vehicle is on this road", not "the vehicle is at this exact point", and
+     * a corridor is the shape of that claim. The uncertainty circle continues to carry the
+     * magnitude, so nothing about the error is hidden by this.
+     */
+    private val corridorSegments = mutableListOf<Polyline>()
 
     private val trailSegments = mutableListOf<Polyline>()
     private var currentSegmentIsGnss: Boolean? = null
@@ -209,8 +278,18 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
         lastMode = mode
         val isGnss = isGnssFamily(mode)
         if (currentSegmentIsGnss != isGnss) {
+            val corridor = Polyline(mapView).apply {
+                outlinePaint.strokeWidth = roadWidthPx()
+                outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+                outlinePaint.color = if (isGnss) GNSS_CORRIDOR_COLOR else DEAD_RECKONING_CORRIDOR_COLOR
+            }
+            corridorSegments += corridor
+
             val segment = Polyline(mapView).apply {
                 outlinePaint.strokeWidth = dp(4f)
+                outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
                 outlinePaint.color = if (isGnss) GNSS_TRAIL_COLOR else DEAD_RECKONING_TRAIL_COLOR
                 // Dead-reckoning segments are dashed as well as amber, so the
                 // "no fix here" stretch reads without relying on colour.
@@ -219,10 +298,33 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
                 }
             }
             trailSegments += segment
+            // Order matters: osmdroid draws overlays in list order, so index 0 paints FIRST and
+            // ends up at the BOTTOM. Insert the centre line, then the corridor beneath it —
+            // inserting the corridor first would leave it painting over the line it exists to
+            // sit behind.
             mapView.overlays.add(0, segment)
+            mapView.overlays.add(0, corridor)
             currentSegmentIsGnss = isGnss
         }
-        trailSegments.last().addPoint(GeoPoint(lat, lon))
+        // Only add a vertex once the vehicle has actually moved.
+        //
+        // At 10 Hz and city speed a point lands every half metre, so the drawn path is dominated by
+        // estimator jitter rather than by where the vehicle went — which is what made the corridor
+        // read as lumpy blocks rather than a road. Spacing vertices by MIN_TRAIL_SPACING_M smooths
+        // it, and does so by dropping points that carry no information rather than by filtering
+        // ones that do.
+        //
+        // It also bounds the trail, which was growing without limit for a whole session (TODO A5)
+        // and had just been doubled by the corridor.
+        val point = GeoPoint(lat, lon)
+        val previous = lastTrailPoint
+        if (previous != null && distanceM(previous, point) < MIN_TRAIL_SPACING_M) return
+        lastTrailPoint = point
+
+        corridorSegments.last().addPoint(point)
+        trailSegments.last().addPoint(point)
+        trimTrail()
+        refreshCorridorWidth()
     }
 
     override fun appendPlainGpsPoint(lat: Double, lon: Double) {
@@ -262,6 +364,36 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
 
         private val GNSS_TRAIL_COLOR = 0xFF1565C0.toInt()
         private val DEAD_RECKONING_TRAIL_COLOR = 0xFFFF8F00.toInt()
+
+        // Corridor bands: same hues, heavily translucent so the road and its label stay readable
+        // underneath. The centre line remains the precise claim; the band is the road-width one.
+        private val GNSS_CORRIDOR_COLOR = 0x381565C0
+        private val DEAD_RECKONING_CORRIDOR_COLOR = 0x38FF8F00
+
+        /**
+         * Width of the drawn corridor in metres of ground.
+         *
+         * 7 m is a two-lane urban carriageway, which is what map matching actually asserts the
+         * vehicle is within. Chosen as a real quantity rather than a pleasing thickness: if the
+         * band is ever widened to make results look tidier, that stops being true and the picture
+         * starts overstating the result.
+         */
+        private const val ROAD_WIDTH_M = 7.0
+
+        /** Bounds so the band stays legible when zoomed far out or far in. */
+        /**
+         * Minimum ground distance between drawn vertices, metres.
+         *
+         * Below roughly this the difference between consecutive points is estimator noise, not
+         * travel. 3 m is under a car length, so no real manoeuvre is lost.
+         */
+        private const val MIN_TRAIL_SPACING_M = 3.0
+
+        /** Trail length cap. At 3 m spacing this is about 15 km of history. */
+        private const val MAX_TRAIL_POINTS = 5_000
+
+        private const val MIN_CORRIDOR_DP = 6f
+        private const val MAX_CORRIDOR_DP = 44f
 
         private val UNCERTAINTY_FILL_GNSS = 0x331565C0
         private val UNCERTAINTY_STROKE_GNSS = 0x661565C0

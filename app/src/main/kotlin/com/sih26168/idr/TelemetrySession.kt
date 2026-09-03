@@ -81,6 +81,9 @@ class TelemetrySession(
      */
     fun stopFileCapture() {
         if (writer == null) return
+        // Close any blackout still in progress BEFORE rendering the summary, or a session that
+        // ends mid-outage silently drops it — and those are the longest outages there are.
+        diag.closeOpenOutage(System.nanoTime())
         writer?.close(); writer = null
         val text = SummaryReport.render(diag.summary())
         SharedStorage.openForWrite(context, "summary_$sessionId.txt", "text/plain")

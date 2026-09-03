@@ -156,6 +156,11 @@ class ErrorStateEkf(
         // Same for the offset: every path that moves theta now moves this too, including the GNSS
         // position update once the compass has coupled them.
         mountOffset = wrapToPi(mountOffset)
+
+        // Independent of the wrapping above: that bounds the two angle states, this bounds and
+        // fades biasZ. Order does not matter -- constrainGyroBias touches only the scalar bias.
+        elapsedNanos += (dt * 1e9).toLong()
+        constrainGyroBias(dt)
     }
 
     override fun updateWithGnss(fix: LatLon, speedMps: Float, bearingDeg: Float, horizAccM: Float, bearingValid: Boolean) {
@@ -385,10 +390,67 @@ class ErrorStateEkf(
     override fun updateStationaryGyro(measuredYawRateRadS: Float) {
         val r = Math.toRadians(config.ekfZuptGyroNoiseDps.toDouble()).let { it * it }
         updateScalar(3, measuredYawRateRadS.toDouble() - biasZ, r)
+        // A stationary interval is the ONLY measurement where "all observed rotation is bias" is
+        // true by construction, so it is the only one that resets this clock. Everything else the
+        // bias couples to -- GNSS position residuals, GNSS course -- also carries heading error and
+        // map-match pull, and cannot tell those apart from a rate-sensor offset.
+        lastDirectBiasObservationNanos = elapsedNanos
+        // Bound here as well as in predict(). A stop reporting several deg/s of rotation is far
+        // more likely a mis-detected stop -- the vehicle was actually turning -- than a real
+        // rate-sensor offset, and this is the one measurement that can drive the state hard in a
+        // single update. Clamping only on the next propagation would leave the impossible value
+        // visible to telemetry in between.
+        clampGyroBias()
     }
 
     /** Estimated yaw-rate bias, deg/s. Exposed for telemetry: whether it converges to a stable
      *  value per device is the check that this state is doing its job rather than absorbing noise. */
+    private var elapsedNanos = 0L
+    private var lastDirectBiasObservationNanos = -1L
+
+    /**
+     * Keep the yaw-rate bias inside what a gyroscope can actually have, and shrink it toward the
+     * prior when nothing has observed it directly.
+     *
+     * Measured across three rides, this state does not track a bias — it absorbs heading error and
+     * re-injects it during the next blackout, with a sign that changes per session:
+     *
+     *   ride A: settled at +0.38 deg/s -> heading drifted LEFT
+     *   ride B: settled at -0.43 deg/s -> heading drifted RIGHT, +1.55 deg/s excess
+     *   ride C: excursion to -3.13 deg/s
+     *
+     * `dTheta = raw - biasZ * dt`, so a negative estimate ADDS rotation — that is the mechanism,
+     * and it is why the same defect reads as a left bias one day and a right bias the next.
+     * -3.13 deg/s is an order of magnitude past any consumer MEMS residual offset: the state is
+     * being used as a dumping ground, exactly as [EngineConfig.ekfInitialGyroBiasDps] warned.
+     *
+     * Two constraints, both physical rather than fitted:
+     *
+     *  - a hard bound, because a factory-calibrated gyro's residual offset is a few tenths of a
+     *    deg/s and nothing the filter can observe makes 3 deg/s true;
+     *  - shrinkage toward zero when [updateStationaryGyro] has not fired recently. Without a direct
+     *    observation the prior is a better estimate than one inferred from residuals that conflate
+     *    bias with heading error, so it decays back rather than persisting into the next blackout.
+     *
+     * The half-life is long relative to how often stops occur — ZUPT fired on 17.7% of ticks on the
+     * measured ride — so a genuine bias seen at stops is held. Only an unobserved one fades.
+     */
+    private fun clampGyroBias() {
+        val maxRad = Math.toRadians(config.ekfMaxGyroBiasDps.toDouble())
+        biasZ = biasZ.coerceIn(-maxRad, maxRad)
+    }
+
+    private fun constrainGyroBias(dt: Double) {
+        clampGyroBias()
+
+        val halfLife = config.ekfGyroBiasDecayHalfLifeSeconds
+        if (halfLife <= 0.0) return
+        val sinceObservation = if (lastDirectBiasObservationNanos < 0) Double.MAX_VALUE
+                               else (elapsedNanos - lastDirectBiasObservationNanos) / 1e9
+        if (sinceObservation < halfLife) return
+        biasZ *= Math.pow(0.5, dt / halfLife)
+    }
+
     override fun gyroBiasDps(): Double = Math.toDegrees(biasZ)
 
     override fun lastGnssNis(): Double = lastNis
