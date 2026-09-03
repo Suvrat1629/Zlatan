@@ -709,12 +709,27 @@ class RealEngine(
             )
         }
         val fused = fusionFilter.estimate()
-        // Default (display-only) path: publish the snapped point but keep the reckoner on the
-        // true, unmatched trajectory -- resetting it to the match erased cross-track motion
-        // every tick (a turn's first sideways metres got projected back onto the current way
-        // before the dot could ever reach the cross street). Fusion path: the filter itself is
-        // road-corrected now, so its own estimate is what we publish and continue from.
-        val displayPos = if (fuseMapMatch) fused else matchResult.position
+        // Publish the FILTER's estimate, always -- never the raw snap.
+        //
+        // This used to be `if (fuseMapMatch) fused else matchResult.position`, so with fusion
+        // gated off the published dot was the matcher's snapped point regardless of what the
+        // filter believed. That made the matcher's opinion unfalsifiable: it drove the display
+        // while contributing nothing the covariance could argue with, and every gate protecting
+        // the FILTER from a bad snap protected the DISPLAY from nothing.
+        //
+        // Measured on the 2026-09-04 drive (tel_20260904_031331, GNSS locked from tick 0, never
+        // muted): the published position sat a median of 131 m from the fix, p90 182 m, while the
+        // filter reported 1.1-6.5 m uncertainty -- 143 ticks claimed under 5 m while standing more
+        // than 20 m from the fix. Tick 0 was already 28 m out with map_on_road=1 and unc=1.5 m, so
+        // the chain never had a correct seed to recover from. On the map it reads as a staircase
+        // down a parallel street.
+        //
+        // Same reasoning the fusion path already states above: a snap is an INFERENCE conditioned
+        // on the estimate being roughly right, a fix is a direct observation, and GNSS has to be
+        // allowed to win. A snap that cannot pass the fusion gate has not earned the display
+        // either. deadReckoner.reset(fused) below has always used the filter estimate, so display
+        // and reckoner finally agree on where the vehicle is.
+        val displayPos = fused
         deadReckoner.reset(fused)
 
         // Road-heading correction: on a confident match, pull heading toward the road's

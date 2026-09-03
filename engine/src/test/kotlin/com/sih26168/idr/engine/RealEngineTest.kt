@@ -11,6 +11,7 @@ import com.sih26168.idr.core.types.LatLon
 import com.sih26168.idr.core.types.Mode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class RealEngineTest {
@@ -90,8 +91,17 @@ class RealEngineTest {
         tickOnce()
     }
 
+    /**
+     * With fusion gated off, the matcher must reach NEITHER the filter nor the display.
+     *
+     * This test used to assert the opposite for the display half -- "flag off must publish the raw
+     * snapped point" -- which made every gate protecting the filter from a bad snap protect the
+     * display from nothing. The 2026-09-04 drive is what that cost: the published dot sat a median
+     * 131 m from a live GNSS fix while the filter reported 1.1-6.5 m uncertainty, because the dot
+     * was never the filter's opinion in the first place.
+     */
     @Test
-    fun mapMatchFusionOffLeavesTheDisplayOnlyPathUnchanged() {
+    fun mapMatchFusionOffKeepsTheMatcherOutOfTheDisplayAsWellAsTheFilter() {
         val start = LatLon(12.0, 77.0)
         val snapTo = Geo.stepForward(start, headingDeg = 90.0, forwardM = 25.0)
         val displayOnly = engineWith(FixedMatcher(snapTo, bearingDeg = 0.0), fuse = false, startAt = start)
@@ -106,12 +116,17 @@ class RealEngineTest {
         ).also { it.drive(6) }
 
         val s = displayOnly.state.value
-        // 1. The published dot is exactly the matcher's snapped point.
-        assertEquals(snapTo.lat, s.lat, 1e-9, "flag off must publish the raw snapped point")
-        assertEquals(snapTo.lon, s.lon, 1e-9)
+        val ref = noMatcher.state.value
+        // 1. The published dot is the FILTER's estimate -- identical to the twin that has no
+        //    matcher at all, and demonstrably not the 25 m-away snap.
+        assertEquals(ref.lat, s.lat, 1e-9, "flag off must publish the filter estimate, not the snap")
+        assertEquals(ref.lon, s.lon, 1e-9)
+        assertNotEquals(
+            snapTo.lon, s.lon, "flag off must not publish the snapped point",
+        )
         // 2. The filter itself was never touched -- identical uncertainty to the no-matcher twin.
         assertEquals(
-            noMatcher.state.value.uncertaintyM, s.uncertaintyM, 1e-4f,
+            ref.uncertaintyM, s.uncertaintyM, 1e-4f,
             "flag off must not let the map match into the filter",
         )
     }
