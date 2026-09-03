@@ -261,6 +261,12 @@ class ErrorStateEkf(
      * a quarter turn resolves that 180-degree ambiguity toward whichever end the filter already
      * believes in, which is also why a bearing exactly reversed from the true heading produces the
      * same correction as an aligned one.
+     *
+     * LIMITATION, and it follows directly from that: a genuine 180-degree heading error cannot be
+     * corrected here. The road reports the reverse of what the filter believes, the wrap folds
+     * that to a zero innovation, and the filter is confirmed in the wrong direction rather than
+     * turned around. Recovering a reversed heading is GNSS course's job (updateWithGnss above),
+     * or the compass's. The road can hold a heading; it cannot find one.
      */
     override fun updateWithRoadBearing(roadBearingDeg: Double, sigmaDeg: Float) {
         val bearingRad = Math.toRadians(roadBearingDeg)

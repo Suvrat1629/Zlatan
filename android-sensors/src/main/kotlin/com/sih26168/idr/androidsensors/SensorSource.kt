@@ -18,9 +18,9 @@ class SensorSource(
      * Magnetic declination at the vehicle's location, degrees east of true north. Set by whoever
      * knows where the vehicle is; 0 until then, which costs about a degree in India.
      *
-     * ponytail: set once at service start from the last known location. Declination changes by
-     * roughly 0.01 deg/km, so a whole drive moves it well inside the compass's own 10 deg noise
-     * floor -- refresh per fix only if a session ever crosses hundreds of kilometres.
+     * Set once at service start from the last known location. Declination changes by roughly
+     * 0.01 deg/km, so a whole drive moves it well inside the compass's own 10 deg noise floor --
+     * refresh per fix only if a session ever crosses hundreds of kilometres.
      */
     @Volatile var declinationDeg: Float = 0f
     class NoGyroscopeException : IllegalStateException(
