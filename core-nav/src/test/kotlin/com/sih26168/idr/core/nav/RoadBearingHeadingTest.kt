@@ -27,6 +27,13 @@ class RoadBearingHeadingTest {
      * Drive north with a constant yaw-rate error corrupting the heading input — a drifting gyro,
      * no zero-velocity intervals to observe the bias from. Returns the filter's heading error in
      * degrees at the end.
+     *
+     * NOTE: the correction is applied on EVERY tick, which is what RealEngine does today and is
+     * deliberately what this exercises. It also over-weights the measurement — the same segment
+     * bearing counted outputRateHz times a second is one geometric fact, not many observations —
+     * so the sub-2-degree bound below is partly bought by that, not by the sigma alone. It is the
+     * reason useRoadBearingHeading ships off. If the update is ever rate-limited to segment
+     * changes, this bound must be re-derived rather than kept.
      */
     private fun headingErrorAfterDrift(
         driftDps: Double,

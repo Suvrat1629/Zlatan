@@ -271,17 +271,26 @@ data class EngineConfig(
     // went dark when the EKF took ownership of heading, because nudging the gyro estimator
     // underneath the filter would inject the whole correction as unweighted rotation. This is the
     // same correction re-entered the right way: as a weighted measurement on theta, under the
-    // same gates. On by default -- it restores shipped behaviour rather than adding a new fusion
-    // input, and unlike useMapMatchFusion it cannot move position, only heading.
-    val useRoadBearingHeading: Boolean = true,
+    // same gates.
+    //
+    // OFF by default, on the same measure-first discipline as useGnssNisGate and useHandlingGate.
+    // The update fires every tick with the same segment bearing, so the filter counts one
+    // geometric fact as outputRateHz independent observations; balanced against the heading ARW
+    // the effective sigma settles near 3 deg, tighter than the 5 deg GNSS bearing it would then
+    // outvote. "Restores shipped behaviour" is not quite a defence either: the pre-EKF nudge
+    // applied a 0.08 gain, not a full-weight measurement.
+    //
+    // Enable for a drive, confirm heading is not dragged toward segment bearings through curves,
+    // then either keep it or rate-limit the update to segment changes.
+    val useRoadBearingHeading: Boolean = false,
     // Wider than the GNSS bearing noise on purpose: a road's bearing is its polyline's bearing, so
     // a gentle curve or a wide junction sits 10-15 degrees off the vehicle's true heading. The
     // road is the fallback reference, not the better one.
-    // ponytail: applied every tick with the same segment bearing, so the filter counts one
-    // observation as outputRateHz of them and the effective weight is ~sqrt(outputRateHz)
-    // tighter than this sigma reads. Harmless on a straight, and it is what the pre-EKF nudge
-    // did too; on a gentle curve inside the turn gate it lags heading toward the segment by a
-    // few degrees. Rate-limit to segment changes if it fights GNSS bearing on a real drive.
+    // NOTE: the update is applied every tick with the same segment bearing, so the filter counts
+    // one geometric fact as outputRateHz independent observations and the effective weight is far
+    // tighter than this sigma reads. That over-weighting is why useRoadBearingHeading ships off.
+    // Harmless on a straight; on a gentle curve inside the turn gate it lags heading toward the
+    // segment. Rate-limiting to segment changes is the fix, and is deliberately not in this PR.
     val ekfRoadBearingNoiseDeg: Float = 10f,
 
     // --- compass as a heading measurement, with the mount offset as a state ---
