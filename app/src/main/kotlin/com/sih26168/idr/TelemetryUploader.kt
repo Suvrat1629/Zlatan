@@ -97,11 +97,13 @@ class TelemetryUploader : Closeable {
             putFinite("gnss_lon", t.gnssLon)
             putFinite("uncertainty_m", t.uncertaintyM)
             // Diagnostics added after the uploader was written, and silently absent from every row
-            // collected before 2026-08-31 (TODO.md H2). These are not optional extras: the NIS gate,
-            // the map-match fusion flag and the gyro bias state are all deliberately left disabled
-            // until a real drive supplies their distributions, and these columns ARE those
-            // distributions. Without them the one drive that is supposed to settle those questions
-            // uploads no evidence for any of them.
+            // collected before 2026-08-31 (TODO.md H2). These are not optional extras: the gates
+            // that are still parked -- use_gnss_nis_gate and use_handling_gate -- stay off until a
+            // real drive supplies their distributions, and these columns ARE those distributions.
+            // The two bias states are the other half: they run unconditionally, and whether each
+            // converges to a stable per-device value is the only check that they are tracking a
+            // bias rather than absorbing noise. Without these columns the one drive that is
+            // supposed to settle those questions uploads no evidence for any of them.
             putFinite("gyro_bias_dps", t.gyroBiasDps)
             // The delta model's learned device offset, same reasoning: it converges or it does not,
             // and a stdout line cannot say which after the fact.
