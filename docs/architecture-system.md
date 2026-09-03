@@ -148,15 +148,18 @@ better. See section 16, decision 1.
     actually finish by hand. It now just surfaces the vendor's own continuous calibration via
     `TYPE_MAGNETIC_FIELD` + `onAccuracyChanged`, the same signal every nav app already relies on.
     Nothing is persisted for fusion to consume. The fusion filter is now `ErrorStateEkf`
-    (`use_error_state_ekf: true`), but it takes no magnetic input: its heading measurements are
-    GNSS bearing above `ekf_min_bearing_trust_speed_mps` and the zero-velocity gyro-bias
-    observation, nothing else. Feeding this screen's sensor into it is not a wiring job —
-    `getOrientation` yields the *phone's* azimuth while the filter tracks the *vehicle's*
-    heading, so it first needs a mount-yaw-offset estimate (EMA of GNSS bearing minus magnetic
-    heading while moving) plus a declination correction, since GNSS bearing is true north. That
-    is a fourth calibrator, not a call site, and `docs/model-app-integration-contract.md` (A3.4)
-    already excludes the magnetometer from the model for the vehicle-distortion reason that also
-    makes that offset drift.
+    (`use_error_state_ekf: true`), whose heading measurements are GNSS bearing above
+    `ekf_min_bearing_trust_speed_mps`, the zero-velocity gyro-bias observation, the matched road's
+    bearing (`use_road_bearing_heading`, on), and — behind `use_mag_heading`, **off** — the
+    compass. Wiring the compass in was never a call site: `getOrientation` yields the *phone's*
+    azimuth while the filter tracks the *vehicle's* heading. Rather than estimate that mount
+    offset separately, the EKF carries it as a fifth state with a deliberately wide prior, so an
+    early reading corrects the offset while a post-blackout reading corrects heading and the
+    covariance decides which; declination is passed in per location, since the filter's frame is
+    true north. It stays off by default because `docs/model-app-integration-contract.md` (A3.4)
+    excludes the magnetometer from the model for vehicle distortion, and that call is only
+    overturned by a drive showing `mag_heading_deg - heading` steady per mount at
+    `mag_accuracy = 3` — which is what the compass telemetry columns exist to answer.
 - Degrades gracefully *and says so* — visible uncertainty beats a confident wrong dot.
 - Location never leaves the device by default.
 
