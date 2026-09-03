@@ -547,10 +547,16 @@ class RealEngine(
             // No delta term: fade from the GNSS anchor to the absolute model on the same timescale
             // the blend has always used, rather than snapping to the absolute model the instant a
             // fix is lost. lambda is still reported, so telemetry keeps its meaning.
+            // Before the FIRST fix there is no anchor to fade from, so the model is all there is —
+            // but it must still respect the cap. This previously returned an uncapped 1.0, handing
+            // full weight to the model at the one moment its output cannot be checked against
+            // anything. Seen in the field: `blend_lambda` reached 1.000 on a ride whose per-outage
+            // values were correctly pinned at 0.05 (TODO.md L9).
             val tSec = if (lastAnchorNanos == 0L) Double.MAX_VALUE
                        else ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
-            val lam = if (tSec == Double.MAX_VALUE) 1f
-                      else (tSec / (tSec + config.blendTauSeconds)).toFloat().coerceAtMost(activeBlendMaxLambda)
+            val lam = (if (tSec == Double.MAX_VALUE) 1f
+                       else (tSec / (tSec + config.blendTauSeconds)).toFloat())
+                .coerceAtMost(activeBlendMaxLambda)
             lastLambda = lam
             lastDvMps2 = Float.NaN
             blendSpeedMps = when {

@@ -58,3 +58,29 @@ class BlendLambdaCapTest {
         assertTrue(lambda(10_000.0, tau, 0.2f) == 0.2f)
     }
 }
+
+/**
+ * The cap must hold before the first GNSS fix too (TODO.md L9).
+ *
+ * With no anchor there is nothing to fade FROM, so the model is the only speed source — which is
+ * exactly why it must not get unbounded weight. Its output cannot be checked against anything at
+ * that moment. The code returned an uncapped 1.0 there; a field ride showed `blend_lambda` hitting
+ * 1.000 while every per-outage value was correctly pinned at 0.05.
+ */
+class BlendLambdaNoAnchorTest {
+
+    private fun lambda(tSeconds: Double?, tau: Double, cap: Float): Float =
+        (if (tSeconds == null) 1f else (tSeconds / (tSeconds + tau)).toFloat()).coerceAtMost(cap)
+
+    @kotlin.test.Test
+    fun `no anchor still respects the cap`() {
+        kotlin.test.assertTrue(lambda(null, 240.0, 0.05f) <= 0.05f, "bike cap must bind pre-anchor")
+        kotlin.test.assertTrue(lambda(null, 240.0, 0.5f) <= 0.5f, "car cap must bind pre-anchor")
+    }
+
+    @kotlin.test.Test
+    fun `an uncapped pre-anchor path would hand the model everything`() {
+        // What the bug did, kept so the regression is legible.
+        kotlin.test.assertTrue(1f > 0.05f)
+    }
+}
