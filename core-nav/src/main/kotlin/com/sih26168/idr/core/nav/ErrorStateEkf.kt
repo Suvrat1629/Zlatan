@@ -24,7 +24,7 @@ class ErrorStateEkf(
 
     private val frame = LocalFrame(initial)
 
-    // State [n, e, theta, biasZ, mountOffset]: metres, metres, radians, radians/second, radians.
+    // State [n, e, theta, biasZ]: metres, metres, radians, radians/second.
     //
     // biasZ is the yaw-rate bias (heading work plan F3). The incoming heading delta already
     // contains it, so the true rotation is (dTheta - biasZ * dt). It is a state rather than a
@@ -37,15 +37,6 @@ class ErrorStateEkf(
     private var e = 0.0
     private var theta = 0.0
     private var biasZ = 0.0
-    // Mount offset: vehicle heading minus the phone's true-north azimuth, radians. The compass
-    // reads the phone, the filter tracks the vehicle, and a phone is mounted however the driver
-    // felt like -- so the two differ by a constant that nobody can know in advance. Carrying it as
-    // a state rather than calibrating it separately is what makes the compass usable at all: with
-    // a wide prior on the offset and a tight one on theta, the first compass reading corrects the
-    // offset and leaves heading alone; once the offset has converged and GNSS drops, theta is the
-    // uncertain one and the same measurement corrects heading instead. The filter's covariance
-    // decides which, with no mode switch to get wrong.
-    private var mountOffset = 0.0
     private var thetaInitialised = false
     private var lastInputHeadingDeg = 0.0
 
@@ -60,11 +51,7 @@ class ErrorStateEkf(
     private fun initialVariance(i: Int): Double = when (i) {
         0, 1 -> config.ekfInitialUncertaintyM.toDouble().let { it * it }
         2 -> Math.toRadians(30.0).let { it * it }
-        3 -> Math.toRadians(config.ekfInitialGyroBiasDps.toDouble()).let { it * it }
-        // Deliberately enormous: the phone's orientation in the cradle is genuinely unknown, and
-        // a wide prior here is what routes the first compass innovation into the offset instead
-        // of into heading.
-        else -> Math.toRadians(config.ekfInitialMountOffsetDeg.toDouble()).let { it * it }
+        else -> Math.toRadians(config.ekfInitialGyroBiasDps.toDouble()).let { it * it }
     }
 
     override fun predict(
@@ -111,15 +98,11 @@ class ErrorStateEkf(
         val fET = v * c * dt
         // d(theta)/d(bias) = -dt: an over-estimated bias subtracts too much rotation, which is
         // exactly the coupling that lets a GNSS bearing correction flow back into the bias.
-        // The mount offset does not propagate: it is a property of the cradle, not of motion, so
-        // its row is the identity and it couples to nothing here. It moves only through a
-        // measurement, or through its own random walk in Q below.
         val f = arrayOf(
-            doubleArrayOf(1.0, 0.0, fNT, 0.0, 0.0),
-            doubleArrayOf(0.0, 1.0, fET, 0.0, 0.0),
-            doubleArrayOf(0.0, 0.0, 1.0, -dt, 0.0),
-            doubleArrayOf(0.0, 0.0, 0.0, 1.0, 0.0),
-            doubleArrayOf(0.0, 0.0, 0.0, 0.0, 1.0),
+            doubleArrayOf(1.0, 0.0, fNT, 0.0),
+            doubleArrayOf(0.0, 1.0, fET, 0.0),
+            doubleArrayOf(0.0, 0.0, 1.0, -dt),
+            doubleArrayOf(0.0, 0.0, 0.0, 1.0),
         )
 
         // Jacobian kept in its straight-segment form: over one 100 ms tick the arc correction to
@@ -134,31 +117,16 @@ class ErrorStateEkf(
         val qNESpeed = (c * dt) * (s * dt) * sigmaV * sigmaV
         // Bias random walk: variance grows linearly with time, so sigma scales with sqrt(dt).
         val sigmaBias = Math.toRadians(config.ekfGyroBiasRandomWalkDpsPerSqrtSec.toDouble()) * sqrt(dt)
-        // Mount random walk: small, but not zero. A converged offset with zero process noise can
-        // never recover from the phone being knocked or re-seated mid-drive, which is the one
-        // thing that actually changes it.
-        val sigmaMount = Math.toRadians(config.ekfMountOffsetRandomWalkDegPerSqrtSec.toDouble()) * sqrt(dt)
         val q = arrayOf(
-            doubleArrayOf(qNNSpeed, qNESpeed, 0.0, 0.0, 0.0),
-            doubleArrayOf(qNESpeed, qEESpeed, 0.0, 0.0, 0.0),
-            doubleArrayOf(0.0, 0.0, sigmaTheta * sigmaTheta, 0.0, 0.0),
-            doubleArrayOf(0.0, 0.0, 0.0, sigmaBias * sigmaBias, 0.0),
-            doubleArrayOf(0.0, 0.0, 0.0, 0.0, sigmaMount * sigmaMount),
+            doubleArrayOf(qNNSpeed, qNESpeed, 0.0, 0.0),
+            doubleArrayOf(qNESpeed, qEESpeed, 0.0, 0.0),
+            doubleArrayOf(0.0, 0.0, sigmaTheta * sigmaTheta, 0.0),
+            doubleArrayOf(0.0, 0.0, 0.0, sigmaBias * sigmaBias),
         )
 
         p = add(matMul(matMul(f, p), transpose(f)), q)
         symmetrize()
-        // Keep theta in (-pi, pi]. headingDeg() wraps on read, so the published value was always
-        // right, but the stored angle itself grew without bound -- every lap of a roundabout added
-        // 2*pi. Innovations are differences against theta, and a double loses absolute precision as
-        // its magnitude grows, so an unwrapped angle quietly degrades every heading measurement.
-        theta = wrapToPi(theta)
-        // Same for the offset: every path that moves theta now moves this too, including the GNSS
-        // position update once the compass has coupled them.
-        mountOffset = wrapToPi(mountOffset)
 
-        // Independent of the wrapping above: that bounds the two angle states, this bounds and
-        // fades biasZ. Order does not matter -- constrainGyroBias touches only the scalar bias.
         elapsedNanos += (dt * 1e9).toLong()
         constrainGyroBias(dt)
     }
@@ -226,19 +194,11 @@ class ErrorStateEkf(
         theta += kT0 * yN + kT1 * yE
         biasZ += kB0 * yN + kB1 * yE
 
-        // GNSS position does not observe the mount offset directly -- nothing about a fix says
-        // which way the phone faces in its cradle -- so pMN/pME are exactly zero until the first
-        // compass update couples p[4][2], which predict() then leaks into p[4][0] and p[4][1]
-        // through fNT/fET. After that this gain is small but real. Not dead code.
-        val pMN = p[4][0]; val pME = p[4][1]
-        val kM0 = pMN * invSNN + pME * invSNE; val kM1 = pMN * invSNE + pME * invSEE
-        mountOffset += kM0 * yN + kM1 * yE
         val imKH = arrayOf(
-            doubleArrayOf(1 - kN0, -kN1, 0.0, 0.0, 0.0),
-            doubleArrayOf(-kE0, 1 - kE1, 0.0, 0.0, 0.0),
-            doubleArrayOf(-kT0, -kT1, 1.0, 0.0, 0.0),
-            doubleArrayOf(-kB0, -kB1, 0.0, 1.0, 0.0),
-            doubleArrayOf(-kM0, -kM1, 0.0, 0.0, 1.0),
+            doubleArrayOf(1 - kN0, -kN1, 0.0, 0.0),
+            doubleArrayOf(-kE0, 1 - kE1, 0.0, 0.0),
+            doubleArrayOf(-kT0, -kT1, 1.0, 0.0),
+            doubleArrayOf(-kB0, -kB1, 0.0, 1.0),
         )
         p = matMul(imKH, p)
         symmetrize()
@@ -249,85 +209,11 @@ class ErrorStateEkf(
         // a minimum speed (bearing is unreliable near-stationary).
         if (bearingValid && speedMps > config.ekfMinBearingTrustSpeedMps) {
             val bearingRad = Math.toRadians(bearingDeg.toDouble())
-            val yTheta = wrapToPi(bearingRad - theta)
+            val yTheta = ((bearingRad - theta + Math.PI).mod(2 * Math.PI)) - Math.PI
             val rTheta = Math.toRadians(config.ekfGnssBearingNoiseDeg.toDouble()).let { it * it }
             updateScalar(2, yTheta, rTheta)
         }
     }
-
-    /**
-     * Road bearing as a heading measurement. The road under the vehicle is an absolute heading
-     * reference the gyro does not have, and unlike GNSS course it survives a blackout -- on a long
-     * straight, where heading random walk is the dominant cross-track error, it is the only
-     * absolute reference available.
-     *
-     * The innovation wraps to +/-pi/2, not +/-pi, because a way's direction of travel is arbitrary:
-     * a road drawn south-to-north and one drawn north-to-south describe the same road. Wrapping to
-     * a quarter turn resolves that 180-degree ambiguity toward whichever end the filter already
-     * believes in, which is also why a bearing exactly reversed from the true heading produces the
-     * same correction as an aligned one.
-     *
-     * LIMITATION, and it follows directly from that: a genuine 180-degree heading error cannot be
-     * corrected here. The road reports the reverse of what the filter believes, the wrap folds
-     * that to a zero innovation, and the filter is confirmed in the wrong direction rather than
-     * turned around. Recovering a reversed heading is GNSS course's job (updateWithGnss above),
-     * or the compass's. The road can hold a heading; it cannot find one.
-     */
-    override fun updateWithRoadBearing(roadBearingDeg: Double, sigmaDeg: Float) {
-        val bearingRad = Math.toRadians(roadBearingDeg)
-        val y = ((bearingRad - theta + Math.PI / 2).mod(Math.PI)) - Math.PI / 2
-        val r = Math.toRadians(sigmaDeg.toDouble()).let { it * it }
-        updateScalar(2, y, r)
-    }
-
-    /**
-     * Compass azimuth as a heading measurement, with the mount offset solved alongside it.
-     *
-     * The measurement model is: vehicle heading = phone azimuth + declination + mount offset. So
-     * the innovation is that predicted heading minus the filter's own, and H picks out
-     * (-1) on theta and (+1) on the offset -- one measurement, two states, and the covariance
-     * apportions it. Early on, offset variance dwarfs heading variance and the correction lands
-     * almost entirely on the offset; after a blackout has widened heading, it lands on heading.
-     *
-     * [declinationDeg] converts magnetic north to true north, which is the frame the filter's
-     * heading and GNSS bearing are already in. It depends on where on Earth the vehicle is, so it
-     * is passed in rather than assumed -- folding it into the mount offset would make the offset
-     * wrong as soon as the vehicle travelled any distance.
-     */
-    override fun updateWithMagneticHeading(magHeadingDeg: Double, declinationDeg: Double, sigmaDeg: Float) {
-        val predictedTheta = Math.toRadians(magHeadingDeg + declinationDeg) + mountOffset
-        val y = wrapToPi(predictedTheta - theta)
-        val r = Math.toRadians(sigmaDeg.toDouble()).let { it * it }
-        updateHeadingRow(y, r)
-    }
-
-    /**
-     * Scalar update for the compass measurement. H is the Jacobian of what the compass SHOULD
-     * read given the state -- h(x) = theta - mountOffset - declination -- so it is
-     * [0, 0, +1, 0, -1], the negation of the innovation's own derivative. Getting that backwards
-     * drives both states the wrong way while still producing a plausible-looking S, so: a compass
-     * reading ahead of the filter's heading must raise theta and lower the offset.
-     *
-     * Kept separate from [updateRow], which assumes a position-shaped H with no bias or mount
-     * column.
-     */
-    private fun updateHeadingRow(y: Double, r: Double) {
-        val h = doubleArrayOf(0.0, 0.0, 1.0, 0.0, -1.0)
-        val ph = DoubleArray(N) { i -> (0 until N).sumOf { j -> p[i][j] * h[j] } }
-        val s = (0 until N).sumOf { i -> h[i] * ph[i] } + r
-        if (s < 1e-12) return
-        val k = DoubleArray(N) { i -> ph[i] / s }
-        n += k[0] * y; e += k[1] * y; theta += k[2] * y; biasZ += k[3] * y
-        mountOffset += k[4] * y
-        val imKH = Array(N) { i -> DoubleArray(N) { j -> (if (i == j) 1.0 else 0.0) - k[i] * h[j] } }
-        p = matMul(imKH, p)
-        symmetrize()
-    }
-
-    /** Estimated mount offset, degrees, wrapped to (-180, 180]. NaN-free from the first tick: it
-     *  starts at 0 with an enormous variance, so read it together with the compass columns rather
-     *  than on its own -- an offset that has never seen a HIGH-accuracy reading is still the prior. */
-    override fun mountOffsetDeg(): Double = Math.toDegrees(wrapToPi(mountOffset))
 
     override fun updateWithMapMatch(
         position: LatLon,
@@ -359,7 +245,6 @@ class ErrorStateEkf(
         if (s < 1e-12) return
         val k = DoubleArray(N) { i -> p[i][idx] / s }
         n += k[0] * y; e += k[1] * y; theta += k[2] * y; biasZ += k[3] * y
-        mountOffset += k[4] * y
         val newP = Array(N) { i -> DoubleArray(N) { j -> p[i][j] - k[i] * p[idx][j] } }
         p = newP
         symmetrize()
@@ -369,13 +254,12 @@ class ErrorStateEkf(
      *  pre-computed innovation [y] and measurement noise [r]. Used for projected (rotated-axis)
      *  position measurements where H is not a single state selector. */
     private fun updateRow(hN: Double, hE: Double, hT: Double, y: Double, r: Double) {
-        val h = doubleArrayOf(hN, hE, hT, 0.0, 0.0)
+        val h = doubleArrayOf(hN, hE, hT, 0.0)
         val ph = DoubleArray(N) { i -> (0 until N).sumOf { j -> p[i][j] * h[j] } }
         val s = (0 until N).sumOf { i -> h[i] * ph[i] } + r
         if (s < 1e-12) return
         val k = DoubleArray(N) { i -> ph[i] / s }
         n += k[0] * y; e += k[1] * y; theta += k[2] * y; biasZ += k[3] * y
-        mountOffset += k[4] * y
         val imKH = Array(N) { i -> DoubleArray(N) { j -> (if (i == j) 1.0 else 0.0) - k[i] * h[j] } }
         p = matMul(imKH, p)
         symmetrize()
@@ -495,12 +379,8 @@ class ErrorStateEkf(
          *  millimetre at road speed, and the v/omega division would be numerically pointless. */
         private const val ARC_MIN_DTHETA = 1e-6
 
-        /** Shortest signed angle in (-pi, pi]. */
-        private fun wrapToPi(radians: Double): Double =
-            ((radians + Math.PI).mod(2 * Math.PI)) - Math.PI
-
-        /** State dimension: [n, e, theta, biasZ, mountOffset]. */
-        const val N = 5
+        /** State dimension: [n, e, theta, biasZ]. */
+        const val N = 4
 
         private fun matMul(a: Array<DoubleArray>, b: Array<DoubleArray>): Array<DoubleArray> {
             val r = Array(N) { DoubleArray(N) }

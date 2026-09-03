@@ -41,10 +41,6 @@ class RealEngine(
     // the engine publishes the absolute model's speed exactly as before.
     private val deltaEstimator: SpeedEstimator? = null,
     private val deltaNormalizer: Normalizer? = null,
-    // Previous session's learned delta-model offset, or 0 for a first run. See DvBiasEstimator:
-    // the estimate takes ~20 trusted fixes to converge, and it is a property of the device and
-    // the model rather than of the trip, so last session's answer beats starting from zero.
-    initialDvBiasMps2: Float = 0f,
 
     ringBufferCapacitySamples: Int = 4000,
 ) : PositioningEngine {
@@ -90,14 +86,6 @@ class RealEngine(
     @Volatile private var lastGnssLon = Double.NaN
     @Volatile private var lastInferenceMs = Float.NaN
     @Volatile private var lastDvMps2 = Float.NaN
-
-    // Compass, always recorded; fused only when config.useMagHeading is on (off by default) --
-    // see onMagneticHeading. The pair the dashboard is for is (magHeading - publishedHeading): if
-    // that residual is a stable constant per mount at HIGH accuracy the compass is worth fusing;
-    // if it wanders, the vehicle-distortion call in the integration contract stands and it is not.
-    @Volatile private var lastMagHeadingDeg = Float.NaN
-    @Volatile private var lastMagAccuracy = -1
-    @Volatile private var lastDeclinationDeg = 0f
     @Volatile private var lastLambda = Float.NaN
     // Swapped in and out as recording starts and stops: the engine outlives any one session.
     @Volatile private var diagnostics: Diagnostics? = null
@@ -131,14 +119,6 @@ class RealEngine(
     private val handlingTickCount = java.util.concurrent.atomic.AtomicLong(0)
     private val pendingGnssFix = AtomicReference<GnssFixRecord?>(null)
     private val lastKnownGnssSpeedMps = AtomicReference(0f)
-
-    /** A compass reading waiting for the tick thread. See [onMagneticHeading]. */
-    private data class MagHeadingRecord(
-        val headingDeg: Double,
-        val declinationDeg: Double,
-        val sigmaDeg: Float,
-    )
-    private val pendingMagHeading = AtomicReference<MagHeadingRecord?>(null)
 
     // Time-varying blend state: the propagated speed estimate and when it was last anchored
     // to a trusted GNSS speed. 0L = never anchored (e.g. indoors since launch).
@@ -174,49 +154,16 @@ class RealEngine(
     @Volatile private var gnssMuted = false
     fun setGnssMuted(muted: Boolean) { gnssMuted = muted }
 
-    override fun onMagneticHeading(
-        tNanos: Long,
-        magneticHeadingDeg: Float,
-        accuracy: Int,
-        declinationDeg: Float,
-    ) {
-        lastMagHeadingDeg = magneticHeadingDeg
-        lastMagAccuracy = accuracy
-        lastDeclinationDeg = declinationDeg
-
-        // Queued, not fused here. This runs on the sensor thread while tickOnce() drives
-        // predict/update on the same filter, and the EKF's state and its covariance array are
-        // plain fields -- applying a measurement inline would race them. onGnssFix already solves
-        // exactly this with pendingGnssFix; this is the same handover, drained in tickOnce().
-        //
-        // Gates that depend only on the reading are applied here, so a reading that could never be
-        // used is never queued. LOW and UNRELIABLE are skipped outright -- an uncalibrated compass
-        // is not a weak measurement, it is a wrong one.
-        //
-        // WALK is excluded because the whole model assumes the phone is fixed relative to the
-        // vehicle. A phone in a walking hand has no mount offset to solve, and letting the filter
-        // chase one would corrupt heading with arm swing.
-        if (!config.useMagHeading || vehicleMode == VehicleMode.WALK) return
-        val sigmaDeg = when (accuracy) {
-            MAG_ACCURACY_HIGH -> config.ekfMagHeadingNoiseHighDeg
-            MAG_ACCURACY_MEDIUM -> config.ekfMagHeadingNoiseMediumDeg
-            else -> return
-        }
-        // Unconditional set: a newer reading supersedes an undrained one rather than queueing
-        // behind it, so what the tick applies is never more than one emit period stale.
-        pendingMagHeading.set(
-            MagHeadingRecord(magneticHeadingDeg.toDouble(), declinationDeg.toDouble(), sigmaDeg)
-        )
-    }
-
     // Online delta-bias calibration (doc §14: "online recalibration against GNSS").
-    // See DvBiasEstimator for what it corrects and why the state lives outside this class.
-    private val dvBias = DvBiasEstimator(
-        alpha = config.dvBiasEmaAlpha,
-        minFixDtSeconds = config.dvBiasFixDtMinSeconds,
-        maxFixDtSeconds = config.dvBiasFixDtMaxSeconds,
-        initialBiasMps2 = initialDvBiasMps2,
-    )
+    // Field logs showed the delta model carries a device/domain-specific positive bias
+    // (+0.5..1.8 m/s^2 on an S24 vs ~0 on the training set), inflating speed between
+    // fixes. While GNSS is trusted the true speed change per second is known, so we
+    // EMA-track (predicted dv - true dv) and subtract it everywhere.
+    private var dvBiasMps2 = 0f
+    private var dvSumSinceFix = 0f
+    private var dvCountSinceFix = 0
+    private var prevFixSpeedMps = Float.NaN
+    private var prevFixNanos = 0L
 
     // Map-match fusion only runs when the matcher actually emits a fusable covariance (the
     // HMM). Feeding a greedy snapper's nearest-segment pick into the EKF as a tight
@@ -422,7 +369,18 @@ class RealEngine(
 
             // Online dv-bias update: compare the delta model's average prediction over the
             // inter-fix interval with the GNSS-observed speed change per second.
-            dvBias.onTrustedFix(fix.speedMps, fix.tNanos)
+            if (!prevFixSpeedMps.isNaN() && prevFixNanos != 0L && dvCountSinceFix > 0) {
+                val dtFix = (fix.tNanos - prevFixNanos) / 1e9f
+                if (dtFix in 0.2f..5f) {
+                    val trueDv = (fix.speedMps - prevFixSpeedMps) / dtFix
+                    val predDv = dvSumSinceFix / dvCountSinceFix
+                    dvBiasMps2 = 0.95f * dvBiasMps2 + 0.05f * (predDv - trueDv)
+                }
+            }
+            prevFixSpeedMps = fix.speedMps
+            prevFixNanos = fix.tNanos
+            dvSumSinceFix = 0f
+            dvCountSinceFix = 0
         }
 
         if (rawWindow == null) {
@@ -564,8 +522,11 @@ class RealEngine(
             // its output must not reach the GNSS-referenced bias estimator either -- that average
             // is compared against a real observed speed change, and feeding hand motion into it
             // would poison a correction that persists long after the shake ends.
-            if (!handling) dvBias.observePrediction(dvRaw)
-            val dv = dvRaw - dvBias.biasMps2          // online bias correction (learned vs GNSS)
+            if (!handling) {
+                dvSumSinceFix += dvRaw
+                dvCountSinceFix++
+            }
+            val dv = dvRaw - dvBiasMps2               // online bias correction (learned vs GNSS)
             lastDvMps2 = dv
             val tSec = ((tEndNanos - lastAnchorNanos) / 1e9).coerceAtLeast(0.0)
             val lam = (tSec / (tSec + config.blendTauSeconds)).toFloat().coerceAtMost(activeBlendMaxLambda)
@@ -583,7 +544,7 @@ class RealEngine(
             if (blendLogCounter++ % 20 == 0) {
                 System.out.println(
                     "IDR-BLEND vAbs=${"%.1f".format(vAbs * 3.6f)}km/h dvRaw=${"%.2f".format(dvRaw)} " +
-                        "bias=${"%.2f".format(dvBias.biasMps2)} lam=${"%.3f".format(lam)} " +
+                        "bias=${"%.2f".format(dvBiasMps2)} lam=${"%.3f".format(lam)} " +
                         "t=${"%.0f".format(tSec)}s zupt=$stationary blend=${"%.1f".format(blendSpeedMps * 3.6f)}km/h"
                 )
             }
@@ -655,22 +616,6 @@ class RealEngine(
             deadReckoned, slewed, headingDeg, dtSeconds,
             speedSigmaMps = estimate.sigmaMps?.takeIf { config.useLearnedSpeedVariance },
         )
-        // Compass, drained here rather than applied on the sensor thread that produced it: the
-        // filter is single-threaded by construction (see onMagneticHeading). After predict() for
-        // two reasons. theta is initialised lazily by the first predict(), which assigns it
-        // outright -- a compass update landing before that would converge the mount offset against
-        // a theta that is then overwritten, leaving a wrong offset with a collapsed variance and
-        // no way back for a minute. And `handling` is this tick's verdict by this point.
-        //
-        // Dropped while handling, on the same argument that gates the dv-bias estimator: a phone
-        // being waved reads a mount offset that is not the mount's, and unlike one bad speed
-        // sample that error persists in a filter state long after the shake ends.
-        pendingMagHeading.getAndSet(null)?.let {
-            if (!handling) {
-                fusionFilter.updateWithMagneticHeading(it.headingDeg, it.declinationDeg, it.sigmaDeg)
-            }
-        }
-
         val preMatchPos = fusionFilter.estimate()
         // ONE snap call per tick -- the HMM advances its hypothesis chain on each call past the
         // displacement gate, so calling it twice would double-step it.
@@ -772,49 +717,24 @@ class RealEngine(
         val displayPos = if (fuseMapMatch) fused else matchResult.position
         deadReckoner.reset(fused)
 
-        // Road-heading correction: on a confident match, pull heading toward the road's bearing.
-        // The gyro's heading random-walk is the dominant cross-track error on long straights
-        // (Part C: 4% -> 34% with outage duration); the road geometry is the absolute reference
-        // the magnetometer failed to be. Gates: tight match only, moving (bearing is meaningless
-        // when parked), and NOT turning (never fight a real turn).
-        //
-        // Two routes, because the correction has to enter wherever heading actually lives. When
-        // the filter owns heading it must arrive as a weighted measurement on the filter's own
-        // theta: nudging the gyro estimator underneath the EKF would inject the whole correction
-        // as if it were real rotation -- unweighted, bypassing the covariance, the same trap
-        // seedFromGnssCourse is gated against above. (updateWithMapMatch also takes a road
-        // bearing, but only to rotate the position measurement into road axes; its H row has
-        // hTheta = 0, so it corrects heading not at all -- and it is on in the shipped config,
-        // so the road was already moving position while contributing nothing to heading.)
-        //
-        // Same gates either way: confident match, moving, and not mid-turn -- never fight a
-        // real turn with the road's average bearing.
-        val roadBearing = matchResult.roadBearingDeg
-        if (roadBearing != null &&
-            matchResult.onRoad &&
-            matchResult.uncertaintyM <= config.roadHeadingMaxUncertaintyM &&
+        // Road-heading correction: on a confident match, pull heading toward the road's
+        // bearing. The gyro's heading random-walk is the dominant cross-track error on long
+        // straights (Part C: 4% -> 34% with outage duration); the road geometry is the
+        // absolute reference the magnetometer failed to be. Gates: tight match only, moving
+        // (bearing meaningless when parked), and NOT turning (never fight a real turn).
+        val roadBearing = mapMatcher.matchedBearingDeg()
+        val matchDist = mapMatcher.matchedDistanceM()
+        if (roadBearing != null && matchDist != null &&
+            matchDist <= config.roadHeadingMaxDistM &&
             slewed > 3f &&
             kotlin.math.abs(turnRad / dtSeconds) < config.roadHeadingMaxTurnRps
         ) {
-            if (fusionFilter.headingDeg() == null) {
-                // UNEXERCISED PATH. It needs a filter that does not own heading -- i.e.
-                // use_error_state_ekf false -- and until this branch it also needed a bearing
-                // from MapMatcher.matchedBearingDeg(), which no matcher overrides, so it was
-                // always null. Reading matchResult instead makes this branch reachable for the
-                // first time: turning the EKF off would run roadHeadingGain against a real drive
-                // having never done so before. Not a reason to keep it dead, but the gain is
-                // untuned by measurement and should be treated that way.
-                //
-                // Way direction is arbitrary: resolve the 180-degree ambiguity toward whichever
-                // end is closer to the current heading. The filter path does the same thing by
-                // wrapping its innovation to a quarter turn.
-                val h = headingEstimator.headingDeg()
-                val d1 = kotlin.math.abs(((roadBearing - h + 540.0) % 360.0) - 180.0)
-                val target = if (d1 <= 90.0) roadBearing else (roadBearing + 180.0).mod(360.0)
-                headingEstimator.nudgeToward(target, config.roadHeadingGain)
-            } else if (config.useRoadBearingHeading) {
-                fusionFilter.updateWithRoadBearing(roadBearing, config.ekfRoadBearingNoiseDeg)
-            }
+            // Way direction is arbitrary: resolve the 180-degree ambiguity toward whichever
+            // end is closer to the current heading.
+            val h = headingEstimator.headingDeg()
+            val d1 = kotlin.math.abs(((roadBearing - h + 540.0) % 360.0) - 180.0)
+            val target = if (d1 <= 90.0) roadBearing else (roadBearing + 180.0).mod(360.0)
+            headingEstimator.nudgeToward(target, config.roadHeadingGain)
         }
 
         // The filter may track its own, better-corrected heading (e.g. ErrorStateEkf, via
@@ -864,20 +784,6 @@ class RealEngine(
                 mapMatchUncertaintyM = if (matchResult.onRoad) matchResult.uncertaintyM else Float.NaN,
                 inferenceMs = lastInferenceMs,
                 tickMs = (System.nanoTime() - t0) / 1_000_000f,
-                // NaN unless the estimator can actually observe anything. observePrediction()
-                // sits inside the `config.useDeltaModel && ...` branch below, so with the delta
-                // model off the estimate never moves -- and a seeded value reported as a number
-                // is indistinguishable from a converged one, which is worse than reporting
-                // nothing. 0 is a legitimate converged estimate too, hence NaN and not 0.
-                dvBiasMps2 = if (config.useDeltaModel && deltaEstimator != null) dvBias.biasMps2
-                             else Float.NaN,
-                magHeadingDeg = lastMagHeadingDeg,
-                magAccuracy = lastMagAccuracy,
-                // NaN unless the compass is actually being fused, for the same reason dvBias is
-                // NaN without a delta model: an untouched mount state reads 0.0, which is a
-                // legitimate converged value for a phone facing straight ahead and must not be
-                // confused with "this never ran".
-                mountOffsetDeg = if (config.useMagHeading) fusionFilter.mountOffsetDeg().toFloat() else Float.NaN,
             )
             diagnostics?.onTick(tick)
             telemetryWriter?.write(tick)
@@ -896,12 +802,5 @@ class RealEngine(
             uncertaintyM = fusionFilter.uncertaintyM(),
             engineTickMs = (System.nanoTime() - tickStartNanos) / 1_000_000f,
         )
-    }
-
-    private companion object {
-        // android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM / _HIGH. Duplicated as
-        // plain Ints because :engine is pure Kotlin and must not depend on the Android SDK.
-        const val MAG_ACCURACY_MEDIUM = 2
-        const val MAG_ACCURACY_HIGH = 3
     }
 }
