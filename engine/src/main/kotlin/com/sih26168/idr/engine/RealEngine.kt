@@ -88,10 +88,10 @@ class RealEngine(
     @Volatile private var lastInferenceMs = Float.NaN
     @Volatile private var lastDvMps2 = Float.NaN
 
-    // Compass, recorded but never fused -- see PositioningEngine.onMagneticHeading. The pair the
-    // dashboard is for is (magHeading - publishedHeading): if that residual is a stable constant
-    // per mount at HIGH accuracy, a mount-offset calibrator is worth building; if it wanders, the
-    // vehicle-distortion call in the integration contract stands and it is not.
+    // Compass, always recorded; fused only when config.useMagHeading is on (off by default) --
+    // see onMagneticHeading. The pair the dashboard is for is (magHeading - publishedHeading): if
+    // that residual is a stable constant per mount at HIGH accuracy the compass is worth fusing;
+    // if it wanders, the vehicle-distortion call in the integration contract stands and it is not.
     @Volatile private var lastMagHeadingDeg = Float.NaN
     @Volatile private var lastMagAccuracy = -1
     @Volatile private var lastDeclinationDeg = 0f
@@ -128,6 +128,14 @@ class RealEngine(
     private val handlingTickCount = java.util.concurrent.atomic.AtomicLong(0)
     private val pendingGnssFix = AtomicReference<GnssFixRecord?>(null)
     private val lastKnownGnssSpeedMps = AtomicReference(0f)
+
+    /** A compass reading waiting for the tick thread. See [onMagneticHeading]. */
+    private data class MagHeadingRecord(
+        val headingDeg: Double,
+        val declinationDeg: Double,
+        val sigmaDeg: Float,
+    )
+    private val pendingMagHeading = AtomicReference<MagHeadingRecord?>(null)
 
     // Time-varying blend state: the propagated speed estimate and when it was last anchored
     // to a trusted GNSS speed. 0L = never anchored (e.g. indoors since launch).
@@ -173,9 +181,14 @@ class RealEngine(
         lastMagAccuracy = accuracy
         lastDeclinationDeg = declinationDeg
 
-        // Fusing happens here rather than on the tick: the compass arrives at its own rate, and a
-        // reading is only worth as much as the vendor's confidence in it. LOW and UNRELIABLE are
-        // skipped outright -- an uncalibrated compass is not a weak measurement, it is a wrong one.
+        // Queued, not fused here. This runs on the sensor thread while tickOnce() drives
+        // predict/update on the same filter, and the EKF's state and its covariance array are
+        // plain fields -- applying a measurement inline would race them. onGnssFix already solves
+        // exactly this with pendingGnssFix; this is the same handover, drained in tickOnce().
+        //
+        // Gates that depend only on the reading are applied here, so a reading that could never be
+        // used is never queued. LOW and UNRELIABLE are skipped outright -- an uncalibrated compass
+        // is not a weak measurement, it is a wrong one.
         //
         // WALK is excluded because the whole model assumes the phone is fixed relative to the
         // vehicle. A phone in a walking hand has no mount offset to solve, and letting the filter
@@ -186,8 +199,10 @@ class RealEngine(
             MAG_ACCURACY_MEDIUM -> config.ekfMagHeadingNoiseMediumDeg
             else -> return
         }
-        fusionFilter.updateWithMagneticHeading(
-            magneticHeadingDeg.toDouble(), declinationDeg.toDouble(), sigmaDeg,
+        // Unconditional set: a newer reading supersedes an undrained one rather than queueing
+        // behind it, so what the tick applies is never more than one emit period stale.
+        pendingMagHeading.set(
+            MagHeadingRecord(magneticHeadingDeg.toDouble(), declinationDeg.toDouble(), sigmaDeg)
         )
     }
 
@@ -628,6 +643,22 @@ class RealEngine(
             deadReckoned, slewed, headingDeg, dtSeconds,
             speedSigmaMps = estimate.sigmaMps?.takeIf { config.useLearnedSpeedVariance },
         )
+        // Compass, drained here rather than applied on the sensor thread that produced it: the
+        // filter is single-threaded by construction (see onMagneticHeading). After predict() for
+        // two reasons. theta is initialised lazily by the first predict(), which assigns it
+        // outright -- a compass update landing before that would converge the mount offset against
+        // a theta that is then overwritten, leaving a wrong offset with a collapsed variance and
+        // no way back for a minute. And `handling` is this tick's verdict by this point.
+        //
+        // Dropped while handling, on the same argument that gates the dv-bias estimator: a phone
+        // being waved reads a mount offset that is not the mount's, and unlike one bad speed
+        // sample that error persists in a filter state long after the shake ends.
+        pendingMagHeading.getAndSet(null)?.let {
+            if (!handling) {
+                fusionFilter.updateWithMagneticHeading(it.headingDeg, it.declinationDeg, it.sigmaDeg)
+            }
+        }
+
         val preMatchPos = fusionFilter.estimate()
         // ONE snap call per tick -- the HMM advances its hypothesis chain on each call past the
         // displacement gate, so calling it twice would double-step it.
@@ -793,7 +824,11 @@ class RealEngine(
                 dvBiasMps2 = if (deltaEstimator != null) dvBias.biasMps2 else Float.NaN,
                 magHeadingDeg = lastMagHeadingDeg,
                 magAccuracy = lastMagAccuracy,
-                mountOffsetDeg = fusionFilter.mountOffsetDeg().toFloat(),
+                // NaN unless the compass is actually being fused, for the same reason dvBias is
+                // NaN without a delta model: an untouched mount state reads 0.0, which is a
+                // legitimate converged value for a phone facing straight ahead and must not be
+                // confused with "this never ran".
+                mountOffsetDeg = if (config.useMagHeading) fusionFilter.mountOffsetDeg().toFloat() else Float.NaN,
             )
             diagnostics?.onTick(tick)
             telemetryWriter?.write(tick)

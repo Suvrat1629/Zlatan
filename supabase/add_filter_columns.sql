@@ -28,14 +28,14 @@ alter table public.telemetry
     add column if not exists map_on_road      boolean,
     add column if not exists map_unc_m        double precision,
 
-    -- Compass, recorded and never fused. mag_heading_deg is the phone's azimuth from MAGNETIC
-    -- north; the filter's heading is the vehicle's. The question a drive answers is whether
-    -- (mag_heading_deg - heading) holds steady per mount while mag_accuracy = 3, which is what
-    -- would justify building the mount-offset calibrator that fusing the compass needs.
+    -- Compass. Always recorded; fused only when use_mag_heading is on, which it is not by
+    -- default. mag_heading_deg is the phone's azimuth from MAGNETIC north; the filter's heading is
+    -- the vehicle's. The question a drive answers is whether (mag_heading_deg - heading) holds
+    -- steady per mount while mag_accuracy = 3, which is what justifies turning that flag on.
     add column if not exists mag_heading_deg  double precision,
     add column if not exists mag_accuracy     integer,
 
-    -- The filter's estimate of how the phone sits in its cradle, degrees. Meaningful only once
-    -- use_mag_heading is on and the compass has been fed; before that it is still the prior. A
-    -- value that converges and then walks is the phone moving in the mount.
+    -- The filter's estimate of how the phone sits in its cradle, degrees. NULL unless
+    -- use_mag_heading is on, so a non-null value here is always a real estimate. One that
+    -- converges and then walks is the phone moving in the mount.
     add column if not exists mount_offset_deg double precision;

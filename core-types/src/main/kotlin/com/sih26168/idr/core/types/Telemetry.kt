@@ -87,18 +87,19 @@ data class TelemetryTick(
      *  something other than a fixed model offset. */
     val dvBiasMps2: Float,
     /** Tilt-compensated compass azimuth, degrees clockwise from MAGNETIC north. NaN until the
-     *  first usable reading, and on a phone with no magnetometer. Recorded, never fused: this
-     *  is the phone's azimuth, not the vehicle's heading, and the offset between them depends on
-     *  the mount. Read it against [headingDeg] — a residual that holds steady per mount at HIGH
-     *  accuracy is what would justify building the mount-offset calibrator that fusing it needs. */
+     *  first usable reading, and on a phone with no magnetometer. Always recorded; fused only
+     *  when `use_mag_heading` is on, which it is not by default. This is the phone's azimuth, not
+     *  the vehicle's heading, and the offset between them depends on the mount. Read it against
+     *  [headingDeg] — a residual that holds steady per mount at HIGH accuracy is what justifies
+     *  turning that flag on. */
     val magHeadingDeg: Float,
     /** The vendor's own confidence in [magHeadingDeg]: SensorManager.SENSOR_STATUS_* (0 unreliable
      *  to 3 high), or -1 before any reading. Only HIGH readings mean anything for the residual. */
     val magAccuracy: Int,
-    /** The filter's estimate of the phone-to-vehicle mount offset, degrees; NaN for filters that
-     *  do not solve one. Only meaningful once the compass has actually been fed — until then it is
-     *  still the (deliberately enormous) prior, so read it beside [magAccuracy]. A converged offset
-     *  that then walks is the phone moving in its cradle. */
+    /** The filter's estimate of the phone-to-vehicle mount offset, degrees. NaN for filters that
+     *  do not solve one, and NaN whenever `use_mag_heading` is off — an unfed mount state reads a
+     *  perfectly plausible 0.0, and that must not be mistaken for a converged answer. A value that
+     *  converges and then walks is the phone moving in its cradle. */
     val mountOffsetDeg: Float,
 )
 
