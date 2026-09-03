@@ -80,11 +80,16 @@ class EngineService : Service() {
         // uploader's own clock — so a local file and its cloud copy could not be matched up.
         telemetry.onSessionIdChanged = uploader::setSessionId
         uploader.setSessionId(telemetry.id)
+        // Only seed the estimator when the delta model is actually running. Its one input,
+        // observePrediction(), lives inside RealEngine's `config.useDeltaModel && ...` branch, so
+        // with the model off the estimate can never move -- loading a stored value would just
+        // hand the same number back on every launch and dress it up as a live estimate.
         dvBiasStore = DvBiasStore(this, EngineFactory.deltaModelVersion(this))
+        val deltaModelOn = EngineFactory.loadConfig(this).useDeltaModel
         rawEngine = EngineFactory.create(
             context = this,
             startAt = lastKnown ?: LatLon(12.9716, 77.5946),
-            initialDvBiasMps2 = dvBiasStore.load(),
+            initialDvBiasMps2 = if (deltaModelOn) dvBiasStore.load() else 0f,
         )
         recordingEngine = TripRecordingEngine(rawEngine)
 

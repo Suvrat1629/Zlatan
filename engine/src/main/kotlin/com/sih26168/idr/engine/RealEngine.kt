@@ -820,9 +820,13 @@ class RealEngine(
                 mapMatchUncertaintyM = if (matchResult.onRoad) matchResult.uncertaintyM else Float.NaN,
                 inferenceMs = lastInferenceMs,
                 tickMs = (System.nanoTime() - t0) / 1_000_000f,
-                // NaN, not 0, when there is no delta model: 0 is a legitimate converged estimate
-                // and must not be confused with "this loop never ran".
-                dvBiasMps2 = if (deltaEstimator != null) dvBias.biasMps2 else Float.NaN,
+                // NaN unless the estimator can actually observe anything. observePrediction()
+                // sits inside the `config.useDeltaModel && ...` branch below, so with the delta
+                // model off the estimate never moves -- and a seeded value reported as a number
+                // is indistinguishable from a converged one, which is worse than reporting
+                // nothing. 0 is a legitimate converged estimate too, hence NaN and not 0.
+                dvBiasMps2 = if (config.useDeltaModel && deltaEstimator != null) dvBias.biasMps2
+                             else Float.NaN,
                 magHeadingDeg = lastMagHeadingDeg,
                 magAccuracy = lastMagAccuracy,
                 // NaN unless the compass is actually being fused, for the same reason dvBias is
