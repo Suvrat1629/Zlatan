@@ -24,7 +24,9 @@ alter table public.telemetry
     add column if not exists gnss_nis         double precision,
     add column if not exists yaw_clamp_count  bigint,
 
-    -- Map matching, display-only today (use_map_match_fusion is off).
+    -- Map matching. use_map_match_fusion is ON in the shipped config.json (the Kotlin default is
+    -- off, the asset overrides it), so map_unc_m is a live input to position, not a display-only
+    -- readout -- which is exactly why the column is worth having.
     add column if not exists map_on_road      boolean,
     add column if not exists map_unc_m        double precision,
 

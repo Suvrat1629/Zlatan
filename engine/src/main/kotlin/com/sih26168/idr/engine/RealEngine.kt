@@ -748,7 +748,8 @@ class RealEngine(
         // as if it were real rotation -- unweighted, bypassing the covariance, the same trap
         // seedFromGnssCourse is gated against above. (updateWithMapMatch also takes a road
         // bearing, but only to rotate the position measurement into road axes; its H row has
-        // hTheta = 0, so it corrects heading not at all. It is also off by default.)
+        // hTheta = 0, so it corrects heading not at all -- and it is on in the shipped config,
+        // so the road was already moving position while contributing nothing to heading.)
         //
         // Same gates either way: confident match, moving, and not mid-turn -- never fight a
         // real turn with the road's average bearing.

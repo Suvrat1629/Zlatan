@@ -57,7 +57,7 @@
   "map_match_max_fuse_uncertainty_m": 15.0,
   "map_match_min_cross_track_sigma_m": 2.0,
   "map_match_along_track_sigma_m": 10000.0,
-  "_comment_ekf_noise": "Filter noise terms. ekf_heading_arw_deg_per_sqrt_s is the one to revisit first: it is fitted to aggregate cross-track medians, not measured, and a real stationary-phone Allan variance should replace it (architecture doc §11). Raising it makes the filter less confident; use_gnss_nis_gate and use_map_match_fusion both stay off until that number is measured.",
+  "_comment_ekf_noise": "Filter noise terms. ekf_heading_arw_deg_per_sqrt_s is the one to revisit first: it is fitted to aggregate cross-track medians, not measured, and a real stationary-phone Allan variance should replace it (architecture doc §11). Raising it makes the filter less confident. use_gnss_nis_gate stays off until that number is measured \u2014 it decides which fixes to REJECT, and rejecting on a fitted sigma would throw away good ones.",
   "ekf_initial_uncertainty_m": 10.0,
   "ekf_speed_noise_mps": 1.0,
   "ekf_heading_arw_deg_per_sqrt_s": 4.2,
