@@ -756,7 +756,7 @@ class RealEngine(
         val roadBearing = matchResult.roadBearingDeg
         if (roadBearing != null &&
             matchResult.onRoad &&
-            matchResult.uncertaintyM <= config.roadHeadingMaxDistM &&
+            matchResult.uncertaintyM <= config.roadHeadingMaxUncertaintyM &&
             slewed > 3f &&
             kotlin.math.abs(turnRad / dtSeconds) < config.roadHeadingMaxTurnRps
         ) {

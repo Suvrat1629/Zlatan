@@ -29,12 +29,18 @@ interface MapMatcher {
 
     fun snap(rawPosition: LatLon): MapMatchResult
 
-    /** Bearing (deg, clockwise from north) of the road segment the last snap matched,
-     *  or null when the last position was off the network. Direction is the way's
-     *  drawing order — callers must resolve the 180-degree ambiguity themselves. */
+    /**
+     * VESTIGIAL — no implementation overrides either of these, so both return null for every
+     * matcher that exists. Any gate written against them is dead code that looks live.
+     *
+     * [MapMatchResult.roadBearingDeg] is the bearing that is actually populated (HmmMapMatcher
+     * sets it from the matched candidate), and [MapMatchResult.uncertaintyM] is the confidence
+     * figure to gate on. Kept only so an out-of-tree matcher can still supply them; delete once
+     * that is ruled out.
+     */
     fun matchedBearingDeg(): Double? = null
 
-    /** Perpendicular distance (m) of the last snap, or null when off-network. */
+    /** VESTIGIAL — see [matchedBearingDeg]. Perpendicular distance (m) of the last snap. */
     fun matchedDistanceM(): Double? = null
     /**
      * Whether this matcher's [MapMatchResult.uncertaintyM] is a real positional covariance

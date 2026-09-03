@@ -54,7 +54,7 @@ object EngineConfigJson {
             walkingSpeedScale = o.optDouble("walking_speed_scale", d.walkingSpeedScale.toDouble()).toFloat(),
             walkingSpeedMaxMps = o.optDouble("walking_speed_max_mps", d.walkingSpeedMaxMps.toDouble()).toFloat(),
             roadHeadingGain = o.optDouble("road_heading_gain", d.roadHeadingGain),
-            roadHeadingMaxDistM = o.optDouble("road_heading_max_dist_m", d.roadHeadingMaxDistM),
+            roadHeadingMaxUncertaintyM = o.optDouble("road_heading_max_uncertainty_m", d.roadHeadingMaxUncertaintyM),
             roadHeadingMaxTurnRps = o.optDouble("road_heading_max_turn_rps", d.roadHeadingMaxTurnRps),
             maxSpeedRiseMps2 = o.optDouble("max_speed_rise_mps2", d.maxSpeedRiseMps2.toDouble()).toFloat(),
             maxSpeedDropMps2 = o.optDouble("max_speed_drop_mps2", d.maxSpeedDropMps2.toDouble()).toFloat(),

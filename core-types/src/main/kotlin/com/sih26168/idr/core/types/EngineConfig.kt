@@ -200,7 +200,13 @@ data class EngineConfig(
     // road's bearing. Kills the gyro random-walk on straights (the dominant cross-track
     // error, Part C). Gated off while turning so it never fights a real turn.
     val roadHeadingGain: Double = 0.08,
-    val roadHeadingMaxDistM: Double = 15.0,
+    /** Confidence gate on the road-heading correction, metres. Compared against
+     *  MapMatchResult.uncertaintyM -- the matcher's positional uncertainty, NOT a perpendicular
+     *  distance, which is what the old road_heading_max_dist_m name implied. The pre-EKF gate did
+     *  read a perpendicular distance, via MapMatcher.matchedDistanceM(), but no matcher has ever
+     *  overridden that method: it returns the interface default of null, so the gate it guarded
+     *  could never pass. Renamed rather than reverted, because reverting restores a dead gate. */
+    val roadHeadingMaxUncertaintyM: Double = 15.0,
     val roadHeadingMaxTurnRps: Double = 0.15,
 
     // Physical slew limits on the published speed: no ground vehicle gains more than
