@@ -33,6 +33,7 @@ class Diagnostics(
 ) {
     private val speedRatios = ArrayList<Double>()
     private val speedResiduals = ArrayList<Double>()
+    private val lowSpeedResiduals = ArrayList<Double>()
     private val headingErrors = ArrayList<Double>()
     private val yawConsistency = ArrayList<Double>()
     private val inferenceMs = ArrayList<Double>()
@@ -43,6 +44,7 @@ class Diagnostics(
     private var onRoadTicks = 0L
     private var matcherTicks = 0L
     private var yawClampCount = 0L
+    private var yawClampBaseline = -1L
     private val markers = ArrayList<TelemetryMarker>()
     private val outages = ArrayList<OutageRecord>()
     private val warnings = LinkedHashSet<String>()
@@ -115,19 +117,51 @@ class Diagnostics(
         if (t.inferenceMs.isFinite() && t.inferenceMs > 0f) inferenceMs.add(t.inferenceMs.toDouble())
         if (t.gyroBiasDps.isFinite()) gyroBiasDps.add(t.gyroBiasDps.toDouble())
         if (t.gnssNis.isFinite()) gnssNis.add(t.gnssNis.toDouble())
-        yawClampCount = t.yawClampCount
+        // The engine's counter is monotonic from engine construction, but a Diagnostics instance
+        // covers ONE recording session. Store the delta since this session's first tick, or the
+        // summary reports every rejection since the app started.
+        //
+        // Measured on session 20260902_123708: reported 18,670 clamps where only 31 happened during
+        // the recording — a 600x overstatement, and it made the two-wheeler yaw bound look like it
+        // was firing constantly when it barely fires at all.
+        if (yawClampBaseline < 0) yawClampBaseline = t.yawClampCount
+        yawClampCount = t.yawClampCount - yawClampBaseline
         matcherTicks++
         if (t.mapMatchOnRoad) onRoadTicks++
 
-        // --- speed residual, only where GNSS speed is meaningful ---
+        // GNSS-derived references are only meaningful while GNSS is actually being received.
+        //
+        // `vGnssMps` and `gnssBearingDeg` both hold the LAST trusted values, so during a blackout
+        // they are frozen at whatever they were when the fix was lost. Scoring against them then
+        // measures how far the vehicle has moved since, not how wrong the estimate is — and it does
+        // so in the direction that makes a long outage look like an estimator failure.
+        //
+        // Measured on session 20260902_123708, which was 77% muted: the summary reported a heading
+        // error of 18.05 deg median where the true GNSS-aided figure is 2.8 deg. Same class of bug
+        // as the drift denominator that divided by the engine's own belief (see OutageRecord):
+        // a metric contaminated by the very failure it exists to measure.
+        val gnssLive = t.mode == Mode.GNSS || t.mode == Mode.NAVIC
         val vg = t.vGnssMps
-        if (vg.isFinite() && vg >= analysisFloorMps && t.vModelMps.isFinite()) {
+
+        // --- speed residual, only where GNSS speed is meaningful ---
+        if (gnssLive && vg.isFinite() && vg >= analysisFloorMps && t.vModelMps.isFinite()) {
             speedRatios.add((t.vModelMps / vg).toDouble())
             speedResiduals.add((t.vModelMps - vg).toDouble())
         }
 
+        // Low-speed error, tracked separately and NOT as a ratio.
+        //
+        // The analysis floor above is right for a ratio — v_model/v_gnss explodes as v_gnss goes to
+        // zero — but it silently excluded 26% of aided ticks on session 20260902_123708, and those
+        // are exactly where the phantom-speed failure lives. A summary that characterises only the
+        // fast three quarters of a ride hides the known failure mode. Reported as a signed residual,
+        // which stays meaningful at zero.
+        if (gnssLive && vg.isFinite() && vg < analysisFloorMps && t.vModelMps.isFinite()) {
+            lowSpeedResiduals.add((t.vModelMps - vg).toDouble())
+        }
+
         // --- heading residual against GNSS course while moving ---
-        if (vg.isFinite() && vg >= analysisFloorMps && t.gnssBearingDeg.isFinite()) {
+        if (gnssLive && vg.isFinite() && vg >= analysisFloorMps && t.gnssBearingDeg.isFinite()) {
             headingErrors.add(abs(wrapDeg(t.headingDeg - t.gnssBearingDeg)))
         }
 
@@ -209,6 +243,34 @@ class Diagnostics(
         pendingBelief = engineBelief
     }
 
+    /**
+     * Close an outage that is still open, so a session ending mid-blackout still reports it.
+     *
+     * `onTick` only closes an outage when the mode leaves DEAD_RECKONING, so a blackout that runs to
+     * the end of the ride was silently dropped. That is survivorship bias in the worst direction:
+     * unclosed outages are by definition the ones that ran longest, so the drift distribution was
+     * missing its own worst tail. Session 20260902_123708 had 22 blackouts and reported 21.
+     *
+     * The error is left NaN because there is no reacquisition fix to measure against — an outage
+     * with no truth is recorded as having happened, with its duration and distances, and explicitly
+     * without a drift figure. Fabricating one would be worse than the omission this fixes.
+     */
+    @Synchronized
+    fun closeOpenOutage(tNanos: Long) {
+        if (!inOutage) return
+        inOutage = false
+        outages.add(
+            OutageRecord(
+                startNanos = outageStartNanos,
+                endNanos = tNanos,
+                durationSeconds = (tNanos - outageStartNanos) / 1e9,
+                deadReckonedDistanceM = outageDistanceM,
+                errorM = Double.NaN,
+                trueDistanceM = if (outageTruthDistanceM > 0.0) outageTruthDistanceM else Double.NaN,
+            )
+        )
+    }
+
     /** One short line for the debug overlay and for logcat. */
     @Synchronized
     fun snapshot(): String {
@@ -252,6 +314,8 @@ class Diagnostics(
         speedSignedBiasMps = mean(speedResiduals),
         speedMaeMps = mean(speedResiduals.map { abs(it) }),
         speedPairs = speedRatios.size.toLong(),
+        lowSpeedResidualMedianMps = median(lowSpeedResiduals),
+        lowSpeedPairs = lowSpeedResiduals.size.toLong(),
         headingErrorMedianDeg = median(headingErrors),
         headingErrorP90Deg = percentile(headingErrors, 0.90),
         yawConsistencyMedian = median(yawConsistency),
