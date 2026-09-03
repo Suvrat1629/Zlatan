@@ -394,6 +394,18 @@ data class EngineConfig(
     // threshold gates both. A wide hypothesis spread or an off-road result exceeds it.
     val mapMatchMaxFuseUncertaintyM: Float = 15f,
     // Cross-track measurement-noise floor: never trust a match tighter than this.
+    /**
+     * Seconds after GNSS returns during which map fusion is held off, letting the fix re-anchor
+     * position unopposed.
+     *
+     * The matcher's hypothesis chain is built during the blackout, so at reacquisition it is often
+     * still locked to whatever road the drifting estimate wandered onto. Measured 2026-09-04: the
+     * filter sat 20-68 m from the fix for the whole minute after every outage, reporting 1.4-3.7 m
+     * uncertainty while it did. Three seconds is roughly three fixes — enough for GNSS to place the
+     * vehicle before the matcher gets a vote on where it is.
+     */
+    val mapMatchReacquireHoldOffSeconds: Double = 3.0,
+
     val mapMatchMinCrossTrackSigmaM: Float = 2f,
     // Along-track measurement noise: deliberately huge. A straight road carries no
     // information about how far along it you are (architecture doc §4), so the along-track

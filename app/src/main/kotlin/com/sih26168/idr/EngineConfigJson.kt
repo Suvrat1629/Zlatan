@@ -60,6 +60,7 @@ object EngineConfigJson {
             mapMatchMaxHeadingDisagreeDeg = o.optDouble("map_match_max_heading_disagree_deg", d.mapMatchMaxHeadingDisagreeDeg),
             useMapMatchFusion = o.optBoolean("use_map_match_fusion", d.useMapMatchFusion),
             mapMatchMaxFuseUncertaintyM = o.optDouble("map_match_max_fuse_uncertainty_m", d.mapMatchMaxFuseUncertaintyM.toDouble()).toFloat(),
+            mapMatchReacquireHoldOffSeconds = o.optDouble("map_match_reacquire_hold_off_s", d.mapMatchReacquireHoldOffSeconds),
             mapMatchMinCrossTrackSigmaM = o.optDouble("map_match_min_cross_track_sigma_m", d.mapMatchMinCrossTrackSigmaM.toDouble()).toFloat(),
             mapMatchAlongTrackSigmaM = o.optDouble("map_match_along_track_sigma_m", d.mapMatchAlongTrackSigmaM.toDouble()).toFloat(),
         )

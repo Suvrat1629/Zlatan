@@ -58,6 +58,33 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
     }
 
     private var lastCorridorPx = 0f
+    private var lastTrailPoint: GeoPoint? = null
+
+    private fun distanceM(a: GeoPoint, b: GeoPoint): Double {
+        val latRad = Math.toRadians(a.latitude)
+        val dLat = (b.latitude - a.latitude) * 111_320.0
+        val dLon = (b.longitude - a.longitude) * 111_320.0 * kotlin.math.cos(latRad)
+        return kotlin.math.hypot(dLat, dLon)
+    }
+
+    /**
+     * Drop the oldest segment once the trail exceeds [MAX_TRAIL_POINTS].
+     *
+     * Whole segments rather than individual points, so a dropped stretch never leaves a
+     * dead-reckoning span rendered as if it had been GNSS-tracked. At the spacing above this is
+     * several kilometres of history, which is more than any demo shows and far less than a session
+     * used to accumulate.
+     */
+    private fun trimTrail() {
+        var total = trailSegments.sumOf { it.actualPoints.size }
+        while (total > MAX_TRAIL_POINTS && trailSegments.size > 1) {
+            val oldTrail = trailSegments.removeAt(0)
+            val oldCorridor = corridorSegments.removeAt(0)
+            total -= oldTrail.actualPoints.size
+            mapView.overlays.remove(oldTrail)
+            mapView.overlays.remove(oldCorridor)
+        }
+    }
 
     private val mapView = MapView(context).apply {
         setMultiTouchControls(true)
@@ -279,9 +306,24 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
             mapView.overlays.add(0, corridor)
             currentSegmentIsGnss = isGnss
         }
+        // Only add a vertex once the vehicle has actually moved.
+        //
+        // At 10 Hz and city speed a point lands every half metre, so the drawn path is dominated by
+        // estimator jitter rather than by where the vehicle went — which is what made the corridor
+        // read as lumpy blocks rather than a road. Spacing vertices by MIN_TRAIL_SPACING_M smooths
+        // it, and does so by dropping points that carry no information rather than by filtering
+        // ones that do.
+        //
+        // It also bounds the trail, which was growing without limit for a whole session (TODO A5)
+        // and had just been doubled by the corridor.
         val point = GeoPoint(lat, lon)
+        val previous = lastTrailPoint
+        if (previous != null && distanceM(previous, point) < MIN_TRAIL_SPACING_M) return
+        lastTrailPoint = point
+
         corridorSegments.last().addPoint(point)
         trailSegments.last().addPoint(point)
+        trimTrail()
         refreshCorridorWidth()
     }
 
@@ -339,6 +381,17 @@ class OsmdroidMapRenderer(context: Context) : MapRenderer {
         private const val ROAD_WIDTH_M = 7.0
 
         /** Bounds so the band stays legible when zoomed far out or far in. */
+        /**
+         * Minimum ground distance between drawn vertices, metres.
+         *
+         * Below roughly this the difference between consecutive points is estimator noise, not
+         * travel. 3 m is under a car length, so no real manoeuvre is lost.
+         */
+        private const val MIN_TRAIL_SPACING_M = 3.0
+
+        /** Trail length cap. At 3 m spacing this is about 15 km of history. */
+        private const val MAX_TRAIL_POINTS = 5_000
+
         private const val MIN_CORRIDOR_DP = 6f
         private const val MAX_CORRIDOR_DP = 44f
 

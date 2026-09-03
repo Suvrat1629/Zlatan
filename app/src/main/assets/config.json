@@ -52,6 +52,8 @@
   "map_match_max_heading_disagree_deg": 35.0,
   "use_map_match_fusion": true,
   "map_match_max_fuse_uncertainty_m": 15.0,
+  "_comment_mapfuse_authority": "The map may never claim to be more certain than the GNSS fix that positioned it \u2014 a snap is an inference, a fix is an observation. Measured 2026-09-04: with a 2 m cross-track sigma against 5 m fixes, the filter sat 20-68 m off GNSS for a full minute after every outage while reporting 1.4-3.7 m uncertainty. Confidently wrong and self-sustaining. The engine now floors the map sigma at the live fix accuracy, and holds fusion off for a few seconds after reacquisition so GNSS re-anchors first.",
+  "map_match_reacquire_hold_off_s": 3.0,
   "map_match_min_cross_track_sigma_m": 2.0,
   "map_match_along_track_sigma_m": 10000.0,
   "ekf_initial_gyro_bias_dps": 0.3,

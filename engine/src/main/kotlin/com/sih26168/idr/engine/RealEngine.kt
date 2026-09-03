@@ -79,6 +79,9 @@ class RealEngine(
     @Volatile private var lastYawRateRadS = 0f
     @Volatile private var lastGyroZ = 0f
     @Volatile private var lastGnssBearingDeg = Float.NaN
+    @Volatile private var lastGnssAccuracyM = Float.NaN
+    /** When GNSS last came back after a dead-reckoning stretch. 0 = never. */
+    @Volatile private var reacquiredAtNanos = 0L
     @Volatile private var lastGnssLat = Double.NaN
     @Volatile private var lastGnssLon = Double.NaN
     @Volatile private var lastInferenceMs = Float.NaN
@@ -289,6 +292,9 @@ class RealEngine(
     ) {
         diagnostics?.onGnssFix(tNanos)
         lastGnssBearingDeg = bearingDeg
+        lastGnssAccuracyM = horizAccM
+        // A fix arriving while the arbiter still reports dead reckoning IS the reacquisition.
+        if (modeArbiter.currentMode(tNanos) == Mode.DEAD_RECKONING) reacquiredAtNanos = tNanos
         lastGnssLat = lat
         lastGnssLon = lon
         // The first trusted fix after a blackout is the only truth we get. Hand it to
@@ -641,7 +647,14 @@ class RealEngine(
             matchResult.roadBearingDeg != null &&
             matchResult.uncertaintyM <= config.mapMatchMaxFuseUncertaintyM &&
             headingAgrees
-        val fuseMapMatch = mapMatchFusionEnabled && gatePasses
+        // Hold map fusion off briefly after a fix returns. The matcher's hypothesis chain was built
+        // during the blackout, so at reacquisition it is often still locked to whatever road the
+        // drifting estimate wandered onto. Letting GNSS re-anchor first, unopposed, is what lets
+        // the matcher re-converge from a correct position instead of defending a wrong one.
+        val sinceReacquireSec = if (reacquiredAtNanos == 0L) Double.MAX_VALUE
+                                else (tEndNanos - reacquiredAtNanos) / 1e9
+        val settlingAfterFix = sinceReacquireSec < config.mapMatchReacquireHoldOffSeconds
+        val fuseMapMatch = mapMatchFusionEnabled && gatePasses && !settlingAfterFix
         // Gate statistics run whenever the matcher COULD be fused (i.e. the HMM), even with
         // use_map_match_fusion off -- a display-only drive on the real 25k-way graph then
         // still reveals whether the toy-fixture-calibrated 15 m gate fires often enough,
@@ -671,10 +684,27 @@ class RealEngine(
             // "reset the reckoner to the matched point", this is a covariance-weighted partial
             // pull that only touches cross-track -- it can't erase a genuine turn onto a cross
             // street (the HMM switches hypotheses as the sideways motion accumulates).
+            // The map may never claim to be more certain than the fix that positioned it.
+            //
+            // A snap is an INFERENCE conditioned on the estimate already being roughly right; a
+            // GNSS fix is a direct observation. Feeding cross-track sigma 2 m against a fix
+            // reporting 5 m accuracy inverts that, and the consequence was measured on
+            // 2026-09-04: after every reacquisition the filter reported 1.4-3.7 m uncertainty
+            // while sitting 20-68 m from the fix. Confidently wrong, and self-sustaining — once
+            // the covariance collapses, later fixes get almost no gain and the estimate cannot
+            // recover. The gyro bias locks at a wrong value for the same reason.
+            //
+            // The heading-agreement gate cannot catch this: the wrong road in that failure is
+            // PARALLEL to the right one, so its bearing agrees perfectly. Only GNSS can tell them
+            // apart, so GNSS has to be allowed to win.
+            val gnssAccuracyFloorM = lastGnssAccuracyM.takeIf { it.isFinite() && it > 0f }
+                ?: config.mapMatchMinCrossTrackSigmaM
             fusionFilter.updateWithMapMatch(
                 matchResult.position,
                 alongTrackSigmaM = config.mapMatchAlongTrackSigmaM,
-                crossTrackSigmaM = matchResult.uncertaintyM.coerceAtLeast(config.mapMatchMinCrossTrackSigmaM),
+                crossTrackSigmaM = matchResult.uncertaintyM
+                    .coerceAtLeast(config.mapMatchMinCrossTrackSigmaM)
+                    .coerceAtLeast(gnssAccuracyFloorM),
                 roadBearingDeg = matchResult.roadBearingDeg!!,
             )
         }
