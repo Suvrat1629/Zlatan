@@ -14,6 +14,8 @@ object EngineConfigJson {
             ekfInitialGyroBiasDps = o.optDouble("ekf_initial_gyro_bias_dps", d.ekfInitialGyroBiasDps.toDouble()).toFloat(),
             ekfGyroBiasRandomWalkDpsPerSqrtSec = o.optDouble("ekf_gyro_bias_random_walk_dps_per_sqrt_s", d.ekfGyroBiasRandomWalkDpsPerSqrtSec.toDouble()).toFloat(),
             ekfZuptGyroNoiseDps = o.optDouble("ekf_zupt_gyro_noise_dps", d.ekfZuptGyroNoiseDps.toDouble()).toFloat(),
+            ekfMaxGyroBiasDps = o.optDouble("ekf_max_gyro_bias_dps", d.ekfMaxGyroBiasDps.toDouble()).toFloat(),
+            ekfGyroBiasDecayHalfLifeSeconds = o.optDouble("ekf_gyro_bias_decay_half_life_s", d.ekfGyroBiasDecayHalfLifeSeconds),
             maxYawRateDps = o.optDouble("max_yaw_rate_dps", d.maxYawRateDps.toDouble()).toFloat(),
             maxYawRateBikeDps = o.optDouble("max_yaw_rate_bike_dps", d.maxYawRateBikeDps.toDouble()).toFloat(),
             ekfGnssNisGate = o.optDouble("ekf_gnss_nis_gate", d.ekfGnssNisGate.toDouble()).toFloat(),

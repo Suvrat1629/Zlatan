@@ -281,6 +281,34 @@ data class EngineConfig(
      *  any measured yaw rate IS bias, so this is close to the sensor's own noise floor. */
     val ekfZuptGyroNoiseDps: Float = 0.5f,
 
+    /**
+     * Hard bound on the yaw-rate bias state, deg/s.
+     *
+     * Physical, not fitted: a factory-calibrated consumer MEMS gyro's residual offset is a few
+     * tenths of a deg/s. Measured on a real ride the state reached **-3.13 deg/s**, which is not a
+     * bias — it is the filter using the state as a dumping ground for heading error it cannot
+     * attribute elsewhere. 1.0 sits far above any real offset and far below any value that could
+     * only come from mis-attribution.
+     */
+    val ekfMaxGyroBiasDps: Float = 1.0f,
+
+    /**
+     * Half-life, seconds, for shrinking the bias toward zero when no zero-velocity interval has
+     * observed it.
+     *
+     * A stopped vehicle is the only measurement where "all observed rotation is bias" is true by
+     * construction. Everything else the state couples to carries heading error too, and cannot be
+     * told apart from a rate offset — which is how the same defect measured as a LEFT drift on one
+     * ride (+0.38 deg/s) and a RIGHT one on the next (-0.43, giving +1.55 deg/s of excess
+     * rotation).
+     *
+     * Absent a direct observation the prior is the better estimate, so an unobserved bias decays
+     * back to it. 120 s is long against how often stops occur — ZUPT fired on 17.7% of ticks on the
+     * measured ride — so a genuine bias seen at stops is held, and only an inferred one fades.
+     * Set to 0 to disable the decay and keep only the hard bound.
+     */
+    val ekfGyroBiasDecayHalfLifeSeconds: Double = 120.0,
+
     // --- GNSS innovation gating (architecture doc: divergence guard) ---
     // A multipath fix in an urban canyon arrives with a confident-looking accuracy figure, so
     // horizAccM alone cannot reject it. The filter's own innovation can: NIS = y' S^-1 y is
