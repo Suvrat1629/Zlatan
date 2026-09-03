@@ -34,20 +34,6 @@ import java.io.File
  * Version 7 adds `tick_interval_ms` — the real elapsed time a tick covered. The engine used to
  * integrate a nominal 100 ms regardless, losing 20.5% of elapsed time on a real ride, and nothing
  * in the log made that visible.
- *
- * Version 8 adds `dv_bias_mps2`, the delta model's learned device offset. It was previously
- * visible only in a stdout line, so no drive could show whether it converged.
- *
- * Version 9 adds `mag_heading_deg` and `mag_accuracy` — the compass, recorded so a drive can show
- * whether its residual against the filter's heading is steady enough to be worth fusing.
- *
- * Version 10 adds `mount_offset_deg`, the filter's estimate of how the phone sits in its cradle.
- * NaN unless use_mag_heading is on.
- *
- * Version 11 renames `dv_bias_mps2` to `dv_bias`, matching the Supabase column so the two records
- * of the same number can be joined without a lookup table. The unit suffix is dropped rather than
- * added on the cloud side because that table is already migrated; `gyro_bias_dps` keeps its suffix
- * in both places, so the convention is inconsistent either way and the cheaper half wins.
  */
 class TelemetryWriter(
     private val writer: BufferedWriter,
@@ -61,7 +47,7 @@ class TelemetryWriter(
     private var rows = 0
 
     init {
-        writer.write("#schema=11")
+        writer.write("#schema=7")
         writer.newLine()
         writer.write(HEADER)
         writer.newLine()
@@ -78,8 +64,7 @@ class TelemetryWriter(
                 t.lat, t.lon, t.gnssLat, t.gnssLon, t.uncertaintyM,
                 t.gyroBiasDps, t.headingUncertaintyDeg, t.gnssNis, t.yawClampCount,
                 if (t.mapMatchOnRoad) 1 else 0, t.mapMatchUncertaintyM,
-                t.inferenceMs, t.tickMs, t.dvBiasMps2, t.magHeadingDeg, t.magAccuracy,
-                t.mountOffsetDeg,
+                t.inferenceMs, t.tickMs,
             ).joinToString(",")
         )
         writer.newLine()
@@ -101,8 +86,7 @@ class TelemetryWriter(
                 "yaw_rate_rad_s,heading_deg,gnss_bearing_deg,a_horiz_mps2," +
                 "stationary,tick_interval_ms,tilt_rate_rps,handling,vehicle_mode,gnss_muted,mode,sats,irnss_sats,lat,lon,gnss_lat,gnss_lon,uncertainty_m," +
                 "gyro_bias_dps,heading_unc_deg,gnss_nis,yaw_clamp_count," +
-                "map_on_road,map_unc_m,inference_ms,tick_ms,dv_bias," +
-                "mag_heading_deg,mag_accuracy,mount_offset_deg"
+                "map_on_road,map_unc_m,inference_ms,tick_ms"
     }
 }
 

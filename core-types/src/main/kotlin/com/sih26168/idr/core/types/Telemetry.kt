@@ -80,27 +80,6 @@ data class TelemetryTick(
     val inferenceMs: Float,
     /** Wall time for the whole engine tick, milliseconds. */
     val tickMs: Float,
-    /** The delta model's learned offset, m/s^2 — the amount already subtracted to produce
-     *  [dvMps2]. NaN when no delta model is loaded. Reads as a convergence check, the same way
-     *  [gyroBiasDps] does: it starts at 0 each session and should climb to a stable
-     *  device-specific value within roughly 20 fixes. One that keeps wandering is tracking
-     *  something other than a fixed model offset. */
-    val dvBiasMps2: Float,
-    /** Tilt-compensated compass azimuth, degrees clockwise from MAGNETIC north. NaN until the
-     *  first usable reading, and on a phone with no magnetometer. Always recorded; fused only
-     *  when `use_mag_heading` is on, which it is not by default. This is the phone's azimuth, not
-     *  the vehicle's heading, and the offset between them depends on the mount. Read it against
-     *  [headingDeg] — a residual that holds steady per mount at HIGH accuracy is what justifies
-     *  turning that flag on. */
-    val magHeadingDeg: Float,
-    /** The vendor's own confidence in [magHeadingDeg]: SensorManager.SENSOR_STATUS_* (0 unreliable
-     *  to 3 high), or -1 before any reading. Only HIGH readings mean anything for the residual. */
-    val magAccuracy: Int,
-    /** The filter's estimate of the phone-to-vehicle mount offset, degrees. NaN for filters that
-     *  do not solve one, and NaN whenever `use_mag_heading` is off — an unfed mount state reads a
-     *  perfectly plausible 0.0, and that must not be mistaken for a converged answer. A value that
-     *  converges and then walks is the phone moving in its cradle. */
-    val mountOffsetDeg: Float,
 )
 
 /** A moment the tester flagged, or an automatic event worth finding again in the log. */
